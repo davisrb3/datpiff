@@ -1,0 +1,9 @@
+*.cfg
+**/old
+**/Imputation
+**/R/.RData
+**/R/.Rhistory
+**/R/old
+**/R/Datpiff_Data_Analysis_cache
+**/R/Datpiff_Data_Analysis_files
+**datpiff/_pycache_
