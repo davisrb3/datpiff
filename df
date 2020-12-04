@@ -1,0 +1,1399 @@
+[33mcommit 9b83348e1b34cf352a215a8cce20d1d35d31d406[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m)[m
+Author: Rob Davis <davisrb3@gmail.com>
+Date:   Fri Dec 4 17:58:51 2020 -0500
+
+    Initial Commit for real
+
+[1mdiff --git a/.gitignore b/.gitignore[m
+[1mnew file mode 100644[m
+[1mindex 0000000..ab1d3b9[m
+[1m--- /dev/null[m
+[1m+++ b/.gitignore[m
+[36m@@ -0,0 +1,9 @@[m
+[32m+[m[32m*.cfg[m
+[32m+[m[32m**/old[m
+[32m+[m[32m**/Imputation[m
+[32m+[m[32m**/R/.RData[m
+[32m+[m[32m**/R/.Rhistory[m
+[32m+[m[32m**/R/old[m
+[32m+[m[32m**/R/Datpiff_Data_Analysis_cache[m
+[32m+[m[32m**/R/Datpiff_Data_Analysis_files[m
+[32m+[m[32m**datpiff/_pycache_[m
+\ No newline at end of file[m
+[1mdiff --git a/R/Datpiff_Data_Analysis.Rmd b/R/Datpiff_Data_Analysis.Rmd[m
+[1mnew file mode 100644[m
+[1mindex 0000000..19f0bf0[m
+[1m--- /dev/null[m
+[1m+++ b/R/Datpiff_Data_Analysis.Rmd[m
+[36m@@ -0,0 +1,442 @@[m
+[32m+[m[32m---[m
+[32m+[m[32mtitle: "Datpiff"[m
+[32m+[m[32mauthor: "Rob Davis"[m
+[32m+[m[32mdate: "11/2/2020"[m
+[32m+[m[32moutput:[m[41m [m
+[32m+[m[32m    html_notebook: default[m
+[32m+[m[32m    html_document: default[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m```{r setup, include=FALSE}[m
+[32m+[m[32mknitr::opts_chunk$set(echo = TRUE)[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Load Libraries[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mlibrary(dplyr)[m
+[32m+[m[32mlibrary(ggplot2)[m
+[32m+[m[32mlibrary(tidyr)[m
+[32m+[m[32mlibrary(lubridate)[m
+[32m+[m[32mlibrary(VIM)[m
+[32m+[m[32mlibrary(reshape2)[m
+[32m+[m[32mlibrary(scales)[m
+[32m+[m
+[32m+[m[32moptions(dplyr.summarise.inform = FALSE)[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Import Data[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mraw.data_0 <- read.csv('../datpiff_2020-11-03_imputed.csv')[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m#### Let's take a quick look at the data[m
+[32m+[m[32m```{r}[m
+[32m+[m[32msummary(raw.data_0)[m
+[32m+[m[32m```[m
+[32m+[m[32m#### Rename the first column which is screwed up for some reason[m
+[32m+[m[32m#### Drop the description field for now, which doesn't have much significance or usability[m
+[32m+[m[32m#### convert release_date to a date[m
+[32m+[m[32m#### Change these (no/yes) fields to (0/1) (buy/download/streaming)_enabled[m
+[32m+[m[32m#### Drop mixtapes with 0 tracks[m
+[32m+[m[32m#### Drop mixtapes where listens > views or downloads > views (these are few and likely erroneous or fraudulent)[m
+[32m+[m[32m#### All mixtapes have more than 0 listens, therefore 0 views is an error and should be imputed (set as NA for now)[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mraw.data_1 <- raw.data_0 %>%[m[41m [m
+[32m+[m[32m  rename(., added_by = 'ï..added_by') %>%[m[41m [m
+[32m+[m[32m  select(., !c(description)) %>%[m[41m [m
+[32m+[m[32m  mutate(., release_date = mdy(release_date),[m
+[32m+[m[32m         buy_enabled = ifelse(buy_enabled=='yes',1,0),[m
+[32m+[m[32m         download_enabled = ifelse(download_enabled=='yes',1,0),[m
+[32m+[m[32m         streaming_enabled = ifelse(streaming_enabled=='yes',1,0),[m
+[32m+[m[32m         views = ifelse(views==0,NA,views)) %>%[m[41m [m
+[32m+[m[32m  filter(., tracks > 0, views > listens)[m
+[32m+[m
+[32m+[m[32msummary(raw.data_1)[m
+[32m+[m[32m```[m
+[32m+[m[32m#### Drop Streaming Enabled because it's always 1[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mraw.data_1 <- select(raw.data_1, !streaming_enabled)[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m#### Investigating NA downloads[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mraw.data_1 %>%[m
+[32m+[m[32m  filter(., download_enabled==1, is.na(downloads))[m
+[32m+[m[32m```[m
+[32m+[m[32m#### Upon investigation of the site, these mixtapes have errors on their pages where downloads failed to load, along with views.[m
+[32m+[m
+[32m+[m[32m## Imputation Efforts[m
+[32m+[m[32m#### Mixtapes with downloads enabled and NA downloads[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mdl_able <- filter(raw.data_1, download_enabled==1)[m
+[32m+[m[32mno_dl_able <- filter(raw.data_1, download_enabled==0)[m
+[32m+[m
+[32m+[m[32mdl_able_impute <- VIM::kNN(dl_able, variable = 'downloads', k = 5, imp_var = FALSE)[m
+[32m+[m
+[32m+[m[32mraw.data_2 <- full_join(no_dl_able, dl_able_impute)[m
+[32m+[m
+[32m+[m[32msummary(raw.data_2)[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m#### Impute Mixtapes with 0 views[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mdata_no_dl <- raw.data_2 %>%[m[41m [m
+[32m+[m[32m  mutate(., views = ifelse(views==0,NA,views)) %>%[m[41m [m
+[32m+[m[32m  select(., !(downloads))[m
+[32m+[m
+[32m+[m[32mdata_no_views <- raw.data_2 %>%[m[41m [m
+[32m+[m[32m  select(., !(views))[m
+[32m+[m
+[32m+[m[32mimpute_views_no_dl <- VIM::kNN(data_no_dl, variable = 'views', imp_var = FALSE, k = 5)[m
+[32m+[m
+[32m+[m[32mraw.data_3 <- full_join(impute_views_no_dl, data_no_views)[m
+[32m+[m
+[32m+[m[32mdata <- raw.data_3[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Adding Features:[m[41m [m
+[32m+[m[32m#### listens_per_view, downloads_per_view, release_month (in YYYY-MM format), release_week[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mdata <- data %>%[m[41m [m
+[32m+[m[32m  mutate(.,[m[41m [m
+[32m+[m[32m         listens_per_view = listens / views,[m
+[32m+[m[32m         downloads_per_view = downloads / views,[m
+[32m+[m[32m         release_year = year(release_date),[m
+[32m+[m[32m         release_month = floor_date(release_date, unit = "month"),[m[41m [m
+[32m+[m[32m         release_week = floor_date(release_date, unit = 'week'))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Some analysis:[m
+[32m+[m
+[32m+[m[32m### Correlations[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mcor_dl <- data %>%[m[41m [m
+[32m+[m[32m  filter(., download_enabled == 1) %>%[m[41m [m
+[32m+[m[32m  select(., !c(added_by, artist, banner, host, release_date,release_month, release_year, release_week, title,[m
+[32m+[m[32m               download_enabled, buy_enabled)) %>%[m
+[32m+[m[32m  cor(.)[m
+[32m+[m
+[32m+[m[32mcor_no_dl <- data %>%[m[41m [m
+[32m+[m[32m  filter(., download_enabled == 0) %>%[m[41m [m
+[32m+[m[32m  select(., !c(added_by, artist, banner, host, release_date,release_month, release_year, release_week, title,[m[41m [m
+[32m+[m[32m               download_enabled, downloads, downloads_per_view)) %>%[m
+[32m+[m[32m  cor(.)[m
+[32m+[m
+[32m+[m[32mcormap_to_map <- function(cormap)[m
+[32m+[m[32m{[m
+[32m+[m[32m  cormap[upper.tri(cormap)] <- NA[m
+[32m+[m[32m  cormap <- melt(cormap, na.rm = T)[m
+[32m+[m[32m  return(cormap)[m
+[32m+[m[32m}[m[41m [m
+[32m+[m
+[32m+[m[32mcormap_dl_plot <- cormap_to_map(cor_dl)[m
+[32m+[m
+[32m+[m[32mcormap_no_dl_plot <- cormap_to_map(cor_no_dl)[m
+[32m+[m
+[32m+[m[32mmake_heatmap <- function(cormap, title){[m
+[32m+[m[32m  out <- ggplot(cormap, aes(x = Var1, y = Var2, fill = value)) +[m[41m [m
+[32m+[m[32m    geom_tile(color = "white") +[m
+[32m+[m[32m    scale_fill_gradient2(low = "gray", high = "orange",[m[41m [m
+[32m+[m[32m                         midpoint = 0.5, limit = c(0,1), space = "Lab",[m[41m [m
+[32m+[m[32m                         name="Correlation") +[m
+[32m+[m[32m    theme_minimal()+[m[41m [m
+[32m+[m[32m    theme(axis.text.x = element_text(angle = 45, vjust = 1,[m[41m [m
+[32m+[m[32m                                     size = 12, hjust = 1)) +[m
+[32m+[m[32m    coord_fixed() +[m[41m [m
+[32m+[m[32m    ggtitle(title)[m
+[32m+[m[41m  [m
+[32m+[m[32m  return(out)[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mheatmap_dl <- make_heatmap(cormap_dl_plot, "Correlation Heatmap for Mixtapes\nwith Downloads Enabled")[m
+[32m+[m
+[32m+[m[32mheatmap_no_dl <- make_heatmap(cormap_no_dl_plot, "Correlation Heatmap for Mixtapes\nwith Downloads Disabled")[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mheatmap_dl[m
+[32m+[m[32m```[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mheatmap_no_dl[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m#### Grouping Data monthly + Plotting[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mmonthly <- data %>%[m[41m [m
+[32m+[m[32m  group_by(., release_month) %>%[m[41m [m
+[32m+[m[32m  summarise(., count = n(),[m[41m [m
+[32m+[m[32m            avg_views = mean(views), med_views = median(views),[m
+[32m+[m[32m            avg_listens = mean(listens), med_listens = median(listens),[m[41m [m
+[32m+[m[32m            avg_downloads = mean(downloads, na.rm = T), med_downloads = median(downloads, na.rm = T),[m
+[32m+[m[32m            avg_lpv = mean(listens_per_view), med_lpv = median(listens_per_view),[m
+[32m+[m[32m            avg_dpv = mean(downloads_per_view, na.rm = T), med_dpv = median(downloads_per_view, na.rm = T))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mmonthly_stats <- monthly %>%[m[41m [m
+[32m+[m[32m  pivot_longer(.,[m
+[32m+[m[32m               count:med_dpv,[m
+[32m+[m[32m               names_to = "stat",[m
+[32m+[m[32m               values_to = "value")[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m#### Plotting Setup[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mview_stats = c("avg_views", "med_views")[m
+[32m+[m[32mdownload_stats = c("avg_downloads", "med_downloads")[m
+[32m+[m[32mlisten_stats = c("avg_listens", "med_listens")[m
+[32m+[m[32mfreq_stats = c("count")[m
+[32m+[m[32mlpv_stats = c("avg_lpv", "med_lpv")[m
+[32m+[m[32mdpv_stats = c("avg_dpv", "med_dpv")[m
+[32m+[m[32mlistens_downloads = c("avg_views", "avg_listens", "avg_downloads")[m
+[32m+[m[32mlpv_dpv = c("avg_lpv", "avg_dpv")[m
+[32m+[m
+[32m+[m[32mstat_plot <- function(x){[m
+[32m+[m[32m  monthly_stats %>%[m[41m [m
+[32m+[m[32m    filter(., stat %in% x) %>%[m
+[32m+[m[32m    ggplot(., aes(x = release_month, y = value)) +[m
+[32m+[m[32m    geom_line(aes(color = stat))[m[41m [m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Mixtape upload frequency over time[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(freq_stats) +[m
+[32m+[m[32m  ggtitle("Mixtape Uploads per Month") +[m
+[32m+[m[32m  ylab("Mixtapes Uploaded") +[m[41m [m
+[32m+[m[32m  xlab("Month") +[m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  theme(legend.position = "none") +[m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "year", limits = c(ymd("2010-01-01"),NA)) +[m[41m [m
+[32m+[m[32m  scale_y_continuous(breaks = seq(0,150,25))[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Average and median mixtape views over time[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(view_stats) +[m[41m [m
+[32m+[m[32m  ggtitle('Mixtape Views by Release Month') +[m[41m [m
+[32m+[m[32m  xlab("Month") +[m
+[32m+[m[32m  ylab("Views") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"),NA)) +[m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 1250000), breaks = seq(0,1250000, 250000), label = comma) +[m[41m [m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Monthly Average", "Monthly Median"))[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Average and median mixtape listens over time[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(listen_stats) +[m[41m [m
+[32m+[m[32m  ggtitle('Mixtape Listens by Release Month') +[m[41m [m
+[32m+[m[32m  xlab("Release Month") +[m
+[32m+[m[32m  ylab("Listens") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +[m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 550000), labels = comma, breaks = seq(0,55E5,1E5)) +[m[41m [m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Monthly Average", "Monthly Median"))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Average and median mixtape downloads over time[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(download_stats) +[m[41m [m
+[32m+[m[32m  ggtitle("Mixtape Downloads by Release Month") +[m[41m [m
+[32m+[m[32m  xlab("Release Month") +[m
+[32m+[m[32m  ylab("Downloads") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +[m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 200000), labels = comma) +[m[41m [m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Monthly Average", "Monthly Median"))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Average and median mixtape listens per view over time[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(lpv_stats) +[m[41m [m
+[32m+[m[32m  ggtitle("Listen per View Rate by Release Date") +[m[41m [m
+[32m+[m[32m  xlab("Release Month") +[m
+[32m+[m[32m  ylab("Listens per View") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +[m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 0.55)) +[m[41m [m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Monthly Average", "Monthly Median"))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Average and median mixtape downloads per view over time[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(dpv_stats) +[m[41m [m
+[32m+[m[32m  ggtitle("Download per View Rate by Release Month") +[m[41m [m
+[32m+[m[32m  xlab("Release Month") +[m
+[32m+[m[32m  ylab("Downloads per View") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +[m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 0.25)) +[m[41m [m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Monthly Average", "Monthly Median"))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Monthly Stats[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(listens_downloads) +[m
+[32m+[m[32m  scale_x_date(limits = c(ymd("2010-01-01", NA))) +[m[41m [m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 1250000))[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## 'Per view' Rates together[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mstat_plot(lpv_dpv) +[m[41m [m
+[32m+[m[32m  geom_smooth(aes(color = stat), se=T, alpha = 0.2, size = 0.4) +[m
+[32m+[m[32m  ggtitle("Listen and Download Rates") +[m[41m [m
+[32m+[m[32m  xlab("Release Month") +[m
+[32m+[m[32m  ylab("Downloads per View") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +[m
+[32m+[m[32m  scale_y_continuous(limits = c(0, 0.55), breaks = seq(0, 0.50, 0.1)) +[m[41m [m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Listens per View", "Downloads per View"))[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Median Listens by Download Enabled status[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mdata %>%[m
+[32m+[m[32m  group_by(., release_month, download_enabled) %>%[m[41m [m
+[32m+[m[32m  summarise(med_listens = median(listens)) %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = release_month, y = med_listens, color = as.factor(download_enabled))) +[m[41m [m
+[32m+[m[32m  geom_line() +[m[41m [m
+[32m+[m[32m  ggtitle("Median Monthly Listens by Download Enabled Status") +[m
+[32m+[m[32m  xlim(ymd("2017-01-01",NA)) + ylim(0,180000) +[m[41m [m
+[32m+[m[32m  ylab("Median Monthly Listens") +[m[41m [m
+[32m+[m[32m  xlab("Release Month") +[m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Downloads Disabled", "Downloads Enabled"))[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Summarising Data by Artist percentile[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mby_artist <- data %>%[m[41m [m
+[32m+[m[32m  group_by(., release_year, artist) %>%[m[41m [m
+[32m+[m[32m  summarise(., mixtapes = n(), download_enabled = sum(download_enabled), buy_enabled = sum(buy_enabled),[m[41m [m
+[32m+[m[32m            total_views = sum(views), avg_views = mean(views),[m[41m [m
+[32m+[m[32m            total_listens = sum(listens), avg_listens = mean(listens),[m
+[32m+[m[32m            total_downloads = sum(downloads, na.rm = T), avg_downloads = mean(downloads)) %>%[m[41m [m
+[32m+[m[32m  group_by(., release_year) %>%[m[41m [m
+[32m+[m[32m  mutate(., ptile = ntile(desc(avg_views), 20))[m
+[32m+[m
+[32m+[m[32mannl_artist_ptile <- by_artist %>%[m[41m [m
+[32m+[m[32m  select(., release_year, artist, ptile)[m
+[32m+[m[41m  [m
+[32m+[m[32mby_artist[m
+[32m+[m
+[32m+[m[32mdata_ptile <- inner_join(data, annl_artist_ptile)[m
+[32m+[m
+[32m+[m[32mdata_ptile[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Download / Buy Rates by ptile[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mdata_ptile %>%[m[41m [m
+[32m+[m[32m  group_by(., release_month, ptile, download_enabled)[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Total listens by annual artist percentiles (in 5%s) for the past 5 years (2015-2020)[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mby_artist %>%[m[41m [m
+[32m+[m[32m  filter(., between(release_year, 2015, 2020)) %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = ptile, y = avg_listens)) +[m[41m [m
+[32m+[m[32m  geom_histogram(stat = "identity")[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Histogram[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mhist_data <- data %>%[m[41m [m
+[32m+[m[32m  filter(., between(release_year, 2015, 2020)) %>%[m[41m [m
+[32m+[m[32m  mutate(., views_bucket = ifelse(views > 1E6, 1E6+1, views))[m
+[32m+[m
+[32m+[m[32mhist_avg <- mean(hist_data$views)[m
+[32m+[m
+[32m+[m[32mhist_breaks = seq(0, 10E5, 1E5)[m
+[32m+[m[32mhist_labels = append(seq(0, 900, 100), "1000\nand Greater")[m
+[32m+[m
+[32m+[m[32mhistogram <- hist_data %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = views_bucket)) +[m[41m [m
+[32m+[m[32m  geom_histogram(breaks = seq(0, 1.05E6, 5E4)) +[m[41m [m
+[32m+[m[32m  ggtitle("Frequency of View Counts Among Mixtapes (2015-2020)") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  ylab("Count") +[m[41m [m
+[32m+[m[32m  xlab("Number of Views (Thousands)") +[m[41m [m
+[32m+[m[32m  scale_x_continuous(breaks = hist_breaks, labels = hist_labels) +[m[41m [m
+[32m+[m[32m  stat_bin(breaks = seq(0, 1.05E6, 5E4), geom="text", aes(label=..count..), vjust=-0.5)[m[41m [m
+[32m+[m
+[32m+[m[32mhistogram[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Same but log[m
+[32m+[m[32m```{r}[m
+[32m+[m[32mdata %>%[m[41m [m
+[32m+[m[32m  filter(., between(release_year, 2015, 2020)) %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = log(views))) +[m[41m [m
+[32m+[m[32m  geom_density() +[m[41m [m
+[32m+[m[32m  ggtitle("Density of Views Across Mixtapes (2015-2020)") +[m[41m [m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  ylab("Density") +[m[41m [m
+[32m+[m[32m  xlab("Number of Views") +[m[41m [m
+[32m+[m[32m  scale_x_continuous(label = comma)[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Rate of 'Download Enabled' and 'Buy Enabled'[m
+[32m+[m[32m```{r}[m
+[32m+[m[32moptions_enabled <- data %>%[m[41m [m
+[32m+[m[32m  group_by(., release_month) %>%[m[41m [m
+[32m+[m[32m  summarise(., count = n(), download_enabled = sum(download_enabled), buy_enabled = sum(buy_enabled)) %>%[m[41m [m
+[32m+[m[32m  mutate(., download_enabled_rate = download_enabled / count, buy_enabled_rate = buy_enabled / count) %>%[m
+[32m+[m[32m  pivot_longer(., count:buy_enabled_rate)[m
+[32m+[m
+[32m+[m[32moptions_enabled_ptile <- data_ptile %>%[m[41m [m
+[32m+[m[32m  group_by(., release_year, ptile) %>%[m[41m [m
+[32m+[m[32m  summarise(., count = n(), download_enabled = sum(download_enabled), buy_enabled = sum(buy_enabled)) %>%[m[41m [m
+[32m+[m[32m  mutate(., download_enabled_rate = download_enabled / count, buy_enabled_rate = buy_enabled / count) %>%[m
+[32m+[m[32m  pivot_longer(., count:buy_enabled_rate)[m
+[32m+[m
+[32m+[m[32moptions_enabled_ptile[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m```{r}[m
+[32m+[m[32moptions_enabled_ptile%>%[m[41m [m
+[32m+[m[32m  filter(name == "download_enabled_rate", ptile %in% c(1,5,10,15,20)) %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = release_year, y = value)) +[m
+[32m+[m[32m  geom_line(aes(color = as.factor(ptile))) +[m[41m [m
+[32m+[m[32m  ggtitle("Mixtapes with Purchase and Download Options (2015 - 2020)") +[m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  xlim(2015,2020) +[m
+[32m+[m[32m  ylab("Mixtapes")[m
+[32m+[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Options Enabled Plot[m
+[32m+[m[32m```{r}[m
+[32m+[m[32moptions_enabled %>%[m[41m [m
+[32m+[m[32m  filter(name %in% c("download_enabled", "buy_enabled")) %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = release_month, y = value)) +[m
+[32m+[m[32m  geom_line(aes(color = name)) +[m[41m [m
+[32m+[m[32m  ggtitle("Mixtapes with Purchase and Download Options (2015 - 2020)") +[m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  ylab("Mixtapes") +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "year", limits = c(ymd("2014-06-30"), NA)) +[m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Purchase Enabled", "Download Enabled")) +[m[41m [m
+[32m+[m[32m  xlab("Month")[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m### Options Enabled Rate Plot[m
+[32m+[m[32m```{r}[m
+[32m+[m[32moptions_enabled %>%[m[41m [m
+[32m+[m[32m  filter(name %in% c("download_enabled_rate", "buy_enabled_rate")) %>%[m[41m [m
+[32m+[m[32m  ggplot(., aes(x = release_month, y = value)) +[m
+[32m+[m[32m  geom_line(aes(color = name)) +[m[41m [m
+[32m+[m[32m  ggtitle("Rate of Purchase and Download Options (2015-2020)") +[m
+[32m+[m[32m  theme_minimal() +[m[41m [m
+[32m+[m[32m  ylab("Rate of Appearance") +[m[41m [m
+[32m+[m[32m  scale_x_date(date_labels = "%b-%y", date_breaks = "year", limits = c(ymd("2015-01-01"), NA)) +[m
+[32m+[m[32m  scale_color_discrete(name = NULL, labels = c("Purchase Enabled", "Download Enabled")) +[m[41m [m
+[32m+[m[32m  xlab("Release Month")[m
+[32m+[m[32m```[m
+[32m+[m
+[1mdiff --git a/datpiff/__init__.py b/datpiff/__init__.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..e69de29[m
+[1mdiff --git a/datpiff/__pycache__/__init__.cpython-38.pyc b/datpiff/__pycache__/__init__.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..ac0a9b6[m
+Binary files /dev/null and b/datpiff/__pycache__/__init__.cpython-38.pyc differ
+[1mdiff --git a/datpiff/__pycache__/items.cpython-38.pyc b/datpiff/__pycache__/items.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..457b563[m
+Binary files /dev/null and b/datpiff/__pycache__/items.cpython-38.pyc differ
+[1mdiff --git a/datpiff/__pycache__/pipelines.cpython-38.pyc b/datpiff/__pycache__/pipelines.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..babb8d0[m
+Binary files /dev/null and b/datpiff/__pycache__/pipelines.cpython-38.pyc differ
+[1mdiff --git a/datpiff/__pycache__/settings.cpython-38.pyc b/datpiff/__pycache__/settings.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..92d8b3e[m
+Binary files /dev/null and b/datpiff/__pycache__/settings.cpython-38.pyc differ
+[1mdiff --git a/datpiff/items.py b/datpiff/items.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..7f36885[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff/items.py[m
+[36m@@ -0,0 +1,32 @@[m
+[32m+[m[32m# Define here the models for your scraped items[m
+[32m+[m[32m#[m
+[32m+[m[32m# See documentation in:[m
+[32m+[m[32m# https://docs.scrapy.org/en/latest/topics/items.html[m
+[32m+[m
+[32m+[m[32mimport scrapy[m
+[32m+[m
+[32m+[m[32mclass DatpiffItem(scrapy.Item):[m
+[32m+[m[32m    # define the fields for your item here like:[m
+[32m+[m[32m    title = scrapy.Field()[m
+[32m+[m[32m    artist = scrapy.Field()[m
+[32m+[m[32m    release_date = scrapy.Field()[m
+[32m+[m[32m    host = scrapy.Field()[m
+[32m+[m[32m    # award = scrapy.Field()[m
+[32m+[m[32m    views = scrapy.Field()[m
+[32m+[m[32m    downloads = scrapy.Field()[m
+[32m+[m[32m    listens = scrapy.Field()[m
+[32m+[m[32m    tracks = scrapy.Field()[m
+[32m+[m[32m    #official = scrapy.Field()[m
+[32m+[m[32m    #instant_dl = scrapy.Field()[m
+[32m+[m[32m    #comments = scrapy.Field()[m
+[32m+[m[32m    #fb_likes = scrapy.Field()[m
+[32m+[m[32m    description = scrapy.Field()[m
+[32m+[m[32m    added_by = scrapy.Field()[m
+[32m+[m[32m    rating_count = scrapy.Field()[m
+[32m+[m[32m    rating_score = scrapy.Field()[m
+[32m+[m[32m    #exclusive = scrapy.Field()[m
+[32m+[m[32m    #sponsored = scrapy.Field()[m
+[32m+[m[32m    banner = scrapy.Field()[m
+[32m+[m[32m    streaming_enabled = scrapy.Field()[m
+[32m+[m[32m    download_enabled = scrapy.Field()[m
+[32m+[m[32m    buy_enabled = scrapy.Field()[m
+\ No newline at end of file[m
+[1mdiff --git a/datpiff/middlewares.py b/datpiff/middlewares.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..aedf024[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff/middlewares.py[m
+[36m@@ -0,0 +1,103 @@[m
+[32m+[m[32m# Define here the models for your spider middleware[m
+[32m+[m[32m#[m
+[32m+[m[32m# See documentation in:[m
+[32m+[m[32m# https://docs.scrapy.org/en/latest/topics/spider-middleware.html[m
+[32m+[m
+[32m+[m[32mfrom scrapy import signals[m
+[32m+[m
+[32m+[m[32m# useful for handling different item types with a single interface[m
+[32m+[m[32mfrom itemadapter import is_item, ItemAdapter[m
+[32m+[m
+[32m+[m
+[32m+[m[32mclass DatpiffSpiderMiddleware:[m
+[32m+[m[32m    # Not all methods need to be defined. If a method is not defined,[m
+[32m+[m[32m    # scrapy acts as if the spider middleware does not modify the[m
+[32m+[m[32m    # passed objects.[m
+[32m+[m
+[32m+[m[32m    @classmethod[m
+[32m+[m[32m    def from_crawler(cls, crawler):[m
+[32m+[m[32m        # This method is used by Scrapy to create your spiders.[m
+[32m+[m[32m        s = cls()[m
+[32m+[m[32m        crawler.signals.connect(s.spider_opened, signal=signals.spider_opened)[m
+[32m+[m[32m        return s[m
+[32m+[m
+[32m+[m[32m    def process_spider_input(self, response, spider):[m
+[32m+[m[32m        # Called for each response that goes through the spider[m
+[32m+[m[32m        # middleware and into the spider.[m
+[32m+[m
+[32m+[m[32m        # Should return None or raise an exception.[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m[32m    def process_spider_output(self, response, result, spider):[m
+[32m+[m[32m        # Called with the results returned from the Spider, after[m
+[32m+[m[32m        # it has processed the response.[m
+[32m+[m
+[32m+[m[32m        # Must return an iterable of Request, or item objects.[m
+[32m+[m[32m        for i in result:[m
+[32m+[m[32m            yield i[m
+[32m+[m
+[32m+[m[32m    def process_spider_exception(self, response, exception, spider):[m
+[32m+[m[32m        # Called when a spider or process_spider_input() method[m
+[32m+[m[32m        # (from other spider middleware) raises an exception.[m
+[32m+[m
+[32m+[m[32m        # Should return either None or an iterable of Request or item objects.[m
+[32m+[m[32m        pass[m
+[32m+[m
+[32m+[m[32m    def process_start_requests(self, start_requests, spider):[m
+[32m+[m[32m        # Called with the start requests of the spider, and works[m
+[32m+[m[32m        # similarly to the process_spider_output() method, except[m
+[32m+[m[32m        # that it doesn’t have a response associated.[m
+[32m+[m
+[32m+[m[32m        # Must return only requests (not items).[m
+[32m+[m[32m        for r in start_requests:[m
+[32m+[m[32m            yield r[m
+[32m+[m
+[32m+[m[32m    def spider_opened(self, spider):[m
+[32m+[m[32m        spider.logger.info('Spider opened: %s' % spider.name)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mclass DatpiffDownloaderMiddleware:[m
+[32m+[m[32m    # Not all methods need to be defined. If a method is not defined,[m
+[32m+[m[32m    # scrapy acts as if the downloader middleware does not modify the[m
+[32m+[m[32m    # passed objects.[m
+[32m+[m
+[32m+[m[32m    @classmethod[m
+[32m+[m[32m    def from_crawler(cls, crawler):[m
+[32m+[m[32m        # This method is used by Scrapy to create your spiders.[m
+[32m+[m[32m        s = cls()[m
+[32m+[m[32m        crawler.signals.connect(s.spider_opened, signal=signals.spider_opened)[m
+[32m+[m[32m        return s[m
+[32m+[m
+[32m+[m[32m    def process_request(self, request, spider):[m
+[32m+[m[32m        # Called for each request that goes through the downloader[m
+[32m+[m[32m        # middleware.[m
+[32m+[m
+[32m+[m[32m        # Must either:[m
+[32m+[m[32m        # - return None: continue processing this request[m
+[32m+[m[32m        # - or return a Response object[m
+[32m+[m[32m        # - or return a Request object[m
+[32m+[m[32m        # - or raise IgnoreRequest: process_exception() methods of[m
+[32m+[m[32m        #   installed downloader middleware will be called[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m[32m    def process_response(self, request, response, spider):[m
+[32m+[m[32m        # Called with the response returned from the downloader.[m
+[32m+[m
+[32m+[m[32m        # Must either;[m
+[32m+[m[32m        # - return a Response object[m
+[32m+[m[32m        # - return a Request object[m
+[32m+[m[32m        # - or raise IgnoreRequest[m
+[32m+[m[32m        return response[m
+[32m+[m
+[32m+[m[32m    def process_exception(self, request, exception, spider):[m
+[32m+[m[32m        # Called when a download handler or a process_request()[m
+[32m+[m[32m        # (from other downloader middleware) raises an exception.[m
+[32m+[m
+[32m+[m[32m        # Must either:[m
+[32m+[m[32m        # - return None: continue processing this exception[m
+[32m+[m[32m        # - return a Response object: stops process_exception() chain[m
+[32m+[m[32m        # - return a Request object: stops process_exception() chain[m
+[32m+[m[32m        pass[m
+[32m+[m
+[32m+[m[32m    def spider_opened(self, spider):[m
+[32m+[m[32m        spider.logger.info('Spider opened: %s' % spider.name)[m
+[1mdiff --git a/datpiff/pipelines.py b/datpiff/pipelines.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..ba3e43e[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff/pipelines.py[m
+[36m@@ -0,0 +1,26 @@[m
+[32m+[m[32m# Define your item pipelines here[m
+[32m+[m[32m#[m
+[32m+[m[32m# Don't forget to add your pipeline to the ITEM_PIPELINES setting[m
+[32m+[m[32m# See: https://docs.scrapy.org/en/latest/topics/item-pipeline.html[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# useful for handling different item types with a single interface[m
+[32m+[m[32mfrom scrapy.exporters import CsvItemExporter[m
+[32m+[m
+[32m+[m[32mclass WriteItemPipeline(object):[m
+[32m+[m
+[32m+[m[32m    def __init__(self):[m
+[32m+[m[32m        self.filename = 'datpiff.csv'[m
+[32m+[m
+[32m+[m[32m    def open_spider(self, spider):[m
+[32m+[m[32m        self.csvfile = open(self.filename, 'wb')[m
+[32m+[m[32m        self.exporter = CsvItemExporter(self.csvfile)[m
+[32m+[m[32m        self.exporter.start_exporting()[m
+[32m+[m
+[32m+[m[32m    def close_spider(self, spider):[m
+[32m+[m[32m        self.exporter.finish_exporting()[m
+[32m+[m[32m        self.csvfile.close()[m
+[32m+[m
+[32m+[m[32m    def process_item(self, item, spider):[m
+[32m+[m[32m        self.exporter.export_item(item)[m
+[32m+[m[32m        return item[m
+\ No newline at end of file[m
+[1mdiff --git a/datpiff/settings.py b/datpiff/settings.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..a441a36[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff/settings.py[m
+[36m@@ -0,0 +1,88 @@[m
+[32m+[m[32m# Scrapy settings for datpiff project[m
+[32m+[m[32m#[m
+[32m+[m[32m# For simplicity, this file contains only settings considered important or[m
+[32m+[m[32m# commonly used. You can find more settings consulting the documentation:[m
+[32m+[m[32m#[m
+[32m+[m[32m#     https://docs.scrapy.org/en/latest/topics/settings.html[m
+[32m+[m[32m#     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html[m
+[32m+[m[32m#     https://docs.scrapy.org/en/latest/topics/spider-middleware.html[m
+[32m+[m
+[32m+[m[32mBOT_NAME = 'datpiff'[m
+[32m+[m
+[32m+[m[32mSPIDER_MODULES = ['datpiff.spiders'][m
+[32m+[m[32mNEWSPIDER_MODULE = 'datpiff.spiders'[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# Crawl responsibly by identifying yourself (and your website) on the user-agent[m
+[32m+[m[32mUSER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'[m
+[32m+[m
+[32m+[m[32m# Obey robots.txt rules[m
+[32m+[m[32mROBOTSTXT_OBEY = False[m
+[32m+[m
+[32m+[m[32m# Configure maximum concurrent requests performed by Scrapy (default: 16)[m
+[32m+[m[32m#CONCURRENT_REQUESTS = 32[m
+[32m+[m
+[32m+[m[32m# Configure a delay for requests for the same website (default: 0)[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay[m
+[32m+[m[32m# See also autothrottle settings and docs[m
+[32m+[m[32mDOWNLOAD_DELAY = 2[m
+[32m+[m[32m# The download delay setting will honor only one of:[m
+[32m+[m[32m#CONCURRENT_REQUESTS_PER_DOMAIN = 16[m
+[32m+[m[32m#CONCURRENT_REQUESTS_PER_IP = 16[m
+[32m+[m
+[32m+[m[32m# Disable cookies (enabled by default)[m
+[32m+[m[32m#COOKIES_ENABLED = False[m
+[32m+[m
+[32m+[m[32m# Disable Telnet Console (enabled by default)[m
+[32m+[m[32m#TELNETCONSOLE_ENABLED = False[m
+[32m+[m
+[32m+[m[32m# Override the default request headers:[m
+[32m+[m[32m#DEFAULT_REQUEST_HEADERS = {[m
+[32m+[m[32m#   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',[m
+[32m+[m[32m#   'Accept-Language': 'en',[m
+[32m+[m[32m#}[m
+[32m+[m
+[32m+[m[32m# Enable or disable spider middlewares[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/spider-middleware.html[m
+[32m+[m[32m#SPIDER_MIDDLEWARES = {[m
+[32m+[m[32m#    'datpiff.middlewares.DatpiffSpiderMiddleware': 543,[m
+[32m+[m[32m#}[m
+[32m+[m
+[32m+[m[32m# Enable or disable downloader middlewares[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html[m
+[32m+[m[32m#DOWNLOADER_MIDDLEWARES = {[m
+[32m+[m[32m#    'datpiff.middlewares.DatpiffDownloaderMiddleware': 543,[m
+[32m+[m[32m#}[m
+[32m+[m
+[32m+[m[32m# Enable or disable extensions[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/extensions.html[m
+[32m+[m[32m#EXTENSIONS = {[m
+[32m+[m[32m#    'scrapy.extensions.telnet.TelnetConsole': None,[m
+[32m+[m[32m#}[m
+[32m+[m
+[32m+[m[32m# Configure item pipelines[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/item-pipeline.html[m
+[32m+[m[32mITEM_PIPELINES = {[m
+[32m+[m[32m    'datpiff.pipelines.WriteItemPipeline': 300,[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32m# Enable and configure the AutoThrottle extension (disabled by default)[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/autothrottle.html[m
+[32m+[m[32m#AUTOTHROTTLE_ENABLED = True[m
+[32m+[m[32m# The initial download delay[m
+[32m+[m[32m#AUTOTHROTTLE_START_DELAY = 5[m
+[32m+[m[32m# The maximum download delay to be set in case of high latencies[m
+[32m+[m[32m#AUTOTHROTTLE_MAX_DELAY = 60[m
+[32m+[m[32m# The average number of requests Scrapy should be sending in parallel to[m
+[32m+[m[32m# each remote server[m
+[32m+[m[32m#AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0[m
+[32m+[m[32m# Enable showing throttling stats for every response received:[m
+[32m+[m[32m#AUTOTHROTTLE_DEBUG = False[m
+[32m+[m
+[32m+[m[32m# Enable and configure HTTP caching (disabled by default)[m
+[32m+[m[32m# See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings[m
+[32m+[m[32m#HTTPCACHE_ENABLED = True[m
+[32m+[m[32m#HTTPCACHE_EXPIRATION_SECS = 0[m
+[32m+[m[32m#HTTPCACHE_DIR = 'httpcache'[m
+[32m+[m[32m#HTTPCACHE_IGNORE_HTTP_CODES = [][m
+[32m+[m[32m#HTTPCACHE_STORAGE = 'scrapy.extensions.httpcache.FilesystemCacheStorage'[m
+[1mdiff --git a/datpiff/spiders/__init__.py b/datpiff/spiders/__init__.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..ebd689a[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff/spiders/__init__.py[m
+[36m@@ -0,0 +1,4 @@[m
+[32m+[m[32m# This package will contain the spiders of your Scrapy project[m
+[32m+[m[32m#[m
+[32m+[m[32m# Please refer to the documentation for information on how to create and manage[m
+[32m+[m[32m# your spiders.[m
+[1mdiff --git a/datpiff/spiders/__pycache__/__init__.cpython-38.pyc b/datpiff/spiders/__pycache__/__init__.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..93c2d35[m
+Binary files /dev/null and b/datpiff/spiders/__pycache__/__init__.cpython-38.pyc differ
+[1mdiff --git a/datpiff/spiders/__pycache__/datpiff_spider.cpython-38.pyc b/datpiff/spiders/__pycache__/datpiff_spider.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..325fc61[m
+Binary files /dev/null and b/datpiff/spiders/__pycache__/datpiff_spider.cpython-38.pyc differ
+[1mdiff --git a/datpiff/spiders/__pycache__/datpiff_spider_0.cpython-38.pyc b/datpiff/spiders/__pycache__/datpiff_spider_0.cpython-38.pyc[m
+[1mnew file mode 100644[m
+[1mindex 0000000..5a31b1d[m
+Binary files /dev/null and b/datpiff/spiders/__pycache__/datpiff_spider_0.cpython-38.pyc differ
+[1mdiff --git a/datpiff/spiders/datpiff_spider.py b/datpiff/spiders/datpiff_spider.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..1e107fb[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff/spiders/datpiff_spider.py[m
+[36m@@ -0,0 +1,163 @@[m
+[32m+[m[32mfrom scrapy import Spider[m
+[32m+[m[32mfrom datpiff.items import DatpiffItem[m
+[32m+[m[32mfrom scrapy import Request[m
+[32m+[m[32mimport re[m
+[32m+[m
+[32m+[m[32mclass datpiff_spider(Spider):[m
+[32m+[m[32m    name = 'datpiff_spider'[m
+[32m+[m[32m    allowed_urls = ['https://www.datpiff.com/'][m
+[32m+[m[32m    start_urls = ['https://www.datpiff.com/mixtapes.php?filter=all&p=1'][m
+[32m+[m
+[32m+[m[32m    def parse(self, response):[m
+[32m+[m[32m    # Get current page number and next page number for iteration[m
+[32m+[m[32m    # Page numbers continue endlessley, even if pages are blank[m
+[32m+[m[32m    # 'Next page' button on the last populated page points to itself, this is how end of mixtapes is detected[m
+[32m+[m[32m        current_page = int(response.xpath('//div[@class="pagination"]//a[@class="active"]/text()').extract_first())[m
+[32m+[m[32m        next_page = int(str.split(response.xpath('//div[@class="pagination"]/a[@class="next"]/@href').extract_first(),'=')[-1])[m
+[32m+[m[32m        next_page_url = 'https://www.datpiff.com' + response.xpath('//div[@class="pagination"]/a[@class="next"]/@href').extract_first()[m
+[32m+[m
+[32m+[m[32m        #Get Mixtape boxes on page[m
+[32m+[m[32m        mixtapes = response.xpath('//div[@id="leftColumnWide"]//div[@class="contentItemInner"]')[m
+[32m+[m[41m        [m
+[32m+[m[32m        for mixtape in mixtapes:[m
+[32m+[m[41m            [m
+[32m+[m[32m            banners = mixtape.xpath('./a/div/@class').extract()[m
+[32m+[m
+[32m+[m[32m            # Only scrape official mixtapes[m
+[32m+[m[32m            if "banner official" not in banners:[m
+[32m+[m[32m                continue[m
+[32m+[m[32m            #     official = "official"[m
+[32m+[m[32m            # else:[m[41m [m
+[32m+[m[32m            #     official = "unofficial"[m
+[32m+[m
+[32m+[m[32m            if "banner sponsor" in banners:[m
+[32m+[m[32m                banner = "sponsored"[m
+[32m+[m[32m            elif "banner exclusive" in banners:[m
+[32m+[m[32m                banner = "exclusive"[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                banner = "none"[m
+[32m+[m
+[32m+[m[32m            mixtape_url = 'https://www.datpiff.com' + mixtape.xpath('.//div[@class="title"]//@href').extract_first()[m
+[32m+[m[32m            artist = mixtape.xpath('./div[@class="artist"]/text()').extract_first().strip()[m
+[32m+[m[32m            title = mixtape.xpath('./div[@class="title"]//text()').extract_first().strip()[m
+[32m+[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                listens = int(''.join(re.findall('\d+', mixtape.xpath('./div[text()="Listens: "]/span/text()').extract_first())))[m
+[32m+[m[32m            except Exception as e:[m
+[32m+[m[32m                print(type(e), e)[m
+[32m+[m[32m                listens = "failed"[m
+[32m+[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                rating_score = int(re.split(' ',mixtape.xpath('./div[@class="text"]/img/@alt').extract_first())[0])[m
+[32m+[m[32m            except Exception as e:[m
+[32m+[m[32m                print(type(e), e)[m
+[32m+[m[32m                rating_score = "failed"[m
+[32m+[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                rating_count = int(''.join(re.findall('\d+', re.split(' ',mixtape.xpath('./div[@class="text"]/img/@title').extract_first())[0])))[m
+[32m+[m[32m            except Exception as e:[m
+[32m+[m[32m                print(type(e), e)[m
+[32m+[m[32m                rating_count = "failed"[m
+[32m+[m
+[32m+[m[32m            meta = {'artist' : artist,[m
+[32m+[m[32m                    'title' : title,[m
+[32m+[m[32m                    'listens' : listens,[m
+[32m+[m[32m                    'rating_score': rating_score,[m
+[32m+[m[32m                    'rating_count' : rating_count,[m
+[32m+[m[32m                    'banner' : banner,[m
+[32m+[m[32m                    # 'official' : official[m
+[32m+[m[32m                    }[m
+[32m+[m[32m            yield Request(url = mixtape_url, callback = self.parse_mixtape_page, meta = meta)[m
+[32m+[m[32m        if current_page < next_page:[m
+[32m+[m[32m            yield Request(url = next_page_url, callback = self.parse)[m
+[32m+[m
+[32m+[m[32m    def parse_mixtape_page(self, response):[m
+[32m+[m[32m        info = response.xpath('//div[@class="module1"]')[m
+[32m+[m[32m        listens = response.meta['listens'][m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            host = str.strip(info.xpath('.//li[@class="dj"]/text()').extract_first())[m[41m   [m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            host = None[m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            views = ''.join(re.findall('\d+', info.xpath('.//li[@class="listens"]/text()').extract_first()))[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            views = None[m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            release_date = info.xpath('//div[@class = "left"]//span/text()').extract_first()[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            release_date = None[m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            added_by = info.xpath('//div[@class = "left"]//a/text()').extract_first()[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            added_by = None[m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            description = str.strip(info.xpath('.//div[@class="description"]//text()').extract_first())[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            description = ''[m
+[32m+[m[41m        [m
+[32m+[m[32m        try:[m
+[32m+[m[32m            stat = [re.split('\-|\.',value)[-2] for value in info.xpath('.//div[@class="downloads right"]//li/img/@src').extract()][m
+[32m+[m[32m            count = [str.strip(x) for x in info.xpath('.//div[@class="downloads right"]//li/text()').extract()][m
+[32m+[m[32m            stats = {stat[x]:count[x] for x in range(0,len(stat))}[m
+[32m+[m[32m            # listens = stats['listens'][m
+[32m+[m[32m            if listens == "failed":[m
+[32m+[m[32m                listens = int(''.join(re.findall('\d+', stats['listens'])))[m
+[32m+[m[32m            downloads = int(''.join(re.findall('\d+', stats['downloads'])))[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            downloads = None[m
+[32m+[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            tracks = len(response.xpath('//span[@class="tracknumber"]/text()').extract())[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            print(type(e),e)[m
+[32m+[m[32m            tracks = len(response.xpath('//span[@class="tracknumber"]/text()').extract())[m
+[32m+[m[41m        [m
+[32m+[m[32m        buttons = response.xpath('//div[@class="actionButtons"]//text()').extract()[m
+[32m+[m
+[32m+[m[32m        if "Stream" in buttons:[m
+[32m+[m[32m            streaming_enabled = "yes"[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            streaming_enabled = "no"[m
+[32m+[m
+[32m+[m[32m        if "Download" in buttons:[m
+[32m+[m[32m            download_enabled = "yes"[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            download_enabled = "no"[m
+[32m+[m
+[32m+[m[32m        if "BUY" in buttons:[m
+[32m+[m[32m            buy_enabled = "yes"[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            buy_enabled = "no"[m
+[32m+[m
+[32m+[m
+[32m+[m[32m        item = DatpiffItem()[m
+[32m+[m[32m        item['title'] = response.meta['title'][m
+[32m+[m[32m        item['artist'] = response.meta['artist'][m
+[32m+[m[32m        # item['official'] = response.meta['official'][m
+[32m+[m[32m        item['downloads'] = downloads[m
+[32m+[m[32m        # item['award'] = award[m
+[32m+[m[32m        item['host'] = host[m
+[32m+[m[32m        item['views'] = views[m
+[32m+[m[32m        item['release_date'] = release_date[m
+[32m+[m[32m        item['added_by'] = added_by[m
+[32m+[m[32m        item['description'] = description[m
+[32m+[m[32m        item['listens'] = listens[m
+[32m+[m[32m        item['tracks'] = tracks[m
+[32m+[m[32m        item['rating_count'] = response.meta['rating_count'][m
+[32m+[m[32m        item['rating_score'] = response.meta['rating_score'][m
+[32m+[m[32m        item['banner'] = response.meta['banner'][m
+[32m+[m[32m        item['streaming_enabled'] = streaming_enabled[m
+[32m+[m[32m        item['download_enabled'] = download_enabled[m
+[32m+[m[32m        item['buy_enabled'] = buy_enabled[m
+[32m+[m[32m        yield item[m[41m  [m
+\ No newline at end of file[m
+[1mdiff --git a/datpiff_2020-11-03_imputed.csv b/datpiff_2020-11-03_imputed.csv[m
+[1mnew file mode 100644[m
+[1mindex 0000000..9d76d62[m
+[1m--- /dev/null[m
+[1m+++ b/datpiff_2020-11-03_imputed.csv[m
+[36m@@ -0,0 +1,9630 @@[m
+[32m+[m[32m﻿added_by,artist,banner,buy_enabled,description,download_enabled,downloads,host,listens,rating_count,rating_score,release_date,streaming_enabled,title,tracks,views[m
+[32m+[m[32mflybeats09,Sheek Louch,exclusive,no,,yes,450,,5126,11,5,10/31/2020,yes,Gorillaween Vol 3,6,12094[m
+[32m+[m[32mHustlehearted1,YN Jay & Louie Ray,none,yes,New mixtape from YN Jay & Louie Ray - The Scouts available now on DatPiff!,no,,,564,2,5,10/31/2020,yes,The Scouts,12,1194[m
+[32m+[m[32mflybeats09,Teejayx6,sponsored,no,,yes,56,,717,3,5,10/31/2020,yes,Spooky,10,1799[m
+[32m+[m[32mHustlehearted1,Go Yayo,none,yes,New mixtape from Go Yayo - No Mercy available now on DatPiff!,no,,,1396,2,5,10/31/2020,yes,No Mercy,18,2893[m
+[32m+[m[32mstreetkingpin,Slime Krime,exclusive,no,"Introducing, Slime Krime. Living Legend Bigga Rankin taps in to hosts the Decatur GA's latest mixtape offering ""A Year Later"". Make sure to follow the campaign.",yes,35,Bigga Rankin,355,2,5,10/31/2020,yes,A Year Later,10,1875[m
+[32m+[m[32mflybeats09,Road Run C Moe,exclusive,no,"New mixtape from Road Run C MOE ""Tales From The Road"" Hosted by DJ Holiday available now!",no,,DJ Holiday,361,1,5,10/31/2020,yes,Tales From The Road,17,1297[m
+[32m+[m[32mHustlehearted1,Baby Tron,none,yes,New mixtape from Baby Tron - Sleeve Nash available now on DatPiff!,no,,,241,1,5,10/31/2020,yes,Sleeve Nash,13,730[m
+[32m+[m[32mHustlehearted1,King Von,none,yes,New project from King Von - Welcome to O'Block available now on DatPiff!,no,,,20842,15,5,10/30/2020,yes,Welcome To O'block,16,35840[m
+[32m+[m[32mHustlehearted1,Busta Rhymes,none,yes,New project from Busta Rhymes - Extinction Level Event 2: The Wrath of God available now on DatPiff!,no,,,24342,19,5,10/30/2020,yes,Extinction Level Event 2: The Wrath Of God,22,54416[m
+[32m+[m[32mHustlehearted1,Ola Runt,none,yes,New mixtape from Ola Runt - Harder 2 Kill available now on DatPiff!,no,,,2759,4,4,10/30/2020,yes,Harder 2 Kill,15,6618[m
+[32m+[m[32mHustlehearted1,HoodRich Pablo Juan,none,yes,New mixtape from HoodRich Pablo Juan - Master Sensei 2 available now on DatPiff!,no,,,4775,10,4,10/30/2020,yes,Master Sensei 2,12,9038[m
+[32m+[m[32mHustlehearted1,IZZE,none,yes,New EP from Izze (Izze The Producer) - Heartbreak Hotel available now on DatPiff!,no,,Izze The Producer,241,0,0,10/29/2020,yes,Heartbreak Hotel,7,1034[m
+[32m+[m[32mHustlehearted1,Kvng Zeakyy,none,no,New mixtape from Kvng Zeakyy - Young Nigga Shit 2 (Hosted By DJ Young Shawn) available now on DatPiff!,yes,18,DJ Young Shawn,193,0,0,10/29/2020,yes,Young N*gga Sh*t 2,14,697[m
+[32m+[m[32mHustlehearted1,Berner & Larry June,none,yes,New Ep from Berner & Larry June - Cooks & Orange Juice available now on DatPiff!,no,,,4618,6,5,10/27/2020,yes,Cooks & Orange Juice,7,10487[m
+[32m+[m[32mstreetkingpin,Thorobred Boo,exclusive,no,"Thorobred Hustlaz presents Thorobred Boo ""Thoro Since Birth"" featuring Living Legend, Bigga Rankin. Memphis born Thorobred Boo, now residing in Atlanta, GA. is here to make his presence felt. With some dope production that is sure to keep you in a zone it's no wonder why this rising superstar is excited about what the future holds. Make sure to download / stream this and all of Thorobred Boo's music available on ALL Platforms",yes,32,Bigga Rankin,68,1,5,10/27/2020,yes,Thoro Since Birth,10,2608[m
+[32m+[m[32mHustlehearted1,NBA Youngboy,none,yes,Never Broke Again Records presents NBA Youngboy - Ain't 2 Long mixtape available now on DatPiff!,no,,Never Broke Again Records,19817,16,4,10/25/2020,yes,Never Broke Again Vol 1 (Ain't Too Long 2),16,36495[m
+[32m+[m[32mHustlehearted1,Dej Loaf,none,yes,New project from Dej Loaf - Sell Sole II available now on DatPiff!,no,,,20722,11,4,10/23/2020,yes,Sell Sole II,16,42310[m
+[32m+[m[32mHustlehearted1,Joyner Lucas,none,yes,New project from Joyner Lucas - Evolution available now on DatPiff!,no,,,22001,20,4,10/23/2020,yes,Evolution,13,53000[m
+[32m+[m[32mHustlehearted1,Baby Fendi,none,yes,New mixtape from Baby Fendi - Maybe I'm Too Humble available now on DatPiff!,no,,,876,4,3,10/23/2020,yes,Maybe I'm Too Humble,10,3326[m
+[32m+[m[32mHustlehearted1,Blacc Zacc,none,yes,New mixtape from Blacc Zacc - 803 Legend available now on DatPiff!,no,,,3391,5,4,10/23/2020,yes,803 Legend,13,7860[m
+[32m+[m[32mHustlehearted1,Q Da Fool,none,yes,New mixtape from Q Da Fool - Dope On A Spoon available now on DatPiff!,no,,,3746,4,4,10/23/2020,yes,Dope On A Spoon,13,8455[m
+[32m+[m[32mHustlehearted1,Yak Gotti,none,yes,New mixtape from Yak Gotti - Gotti Outta Here available now on DatPiff!,no,,,3894,10,4,10/23/2020,yes,Gotti Outta Here,14,7968[m
+[32m+[m[32mHustlehearted1,Trippie Redd,none,yes,New project from Trippie Redd - Spooky Sounds available now on DatPiff!,no,,,9271,19,1,10/22/2020,yes,Spooky Sounds,6,26371[m
+[32m+[m[32mHustlehearted1,Nef The Pharaoh,none,yes,New project from HereYee HereYee - Nef The Pharaoh available now on DatPiff!,no,,,772,7,3,10/21/2020,yes,Hereyee Hereyee,15,2110[m
+[32m+[m[32mHustlehearted1,Trapboy Freddy,none,yes,New mixtape from Trapboy Freddy - Big Trap available now on DatPiff!,no,,,6005,8,3,10/21/2020,yes,Big Trap,17,12032[m
+[32m+[m[32mHustlehearted1,NoLove Stu,none,no,New EP from NoLove Stu - Letters To Thr33 available now on DatPiff!,yes,23,,208,2,5,10/20/2020,yes,Letters To Thr33,3,1155[m
+[32m+[m[32mHustlehearted1,Lil Wop,none,yes,New mixtape from Lil Wop - Wopster 2 available now on DatPiff!,no,,,2545,12,4,10/17/2020,yes,Wopster 2,12,6358[m
+[32m+[m[32mHustlehearted1,Benny The Butcher,none,yes,New project from Benny The Butcher - Burden Of Proof available now on DatPiff!,no,,,51085,33,4,10/16/2020,yes,Burden Of Proof,11,95269[m
+[32m+[m[32mHustlehearted1,SSG Splurge,none,yes,New mixtape from SSG Splurge - Goop Too available now on DatPiff!,no,,,2632,5,3,10/16/2020,yes,Goop Too,11,5304[m
+[32m+[m[32mHustlehearted1,Black Thought,none,yes,"New project from Black Thought - Streams of Thought, Vol. 3: Cane and Abel available now on DatPiff!",no,,,6282,10,5,10/16/2020,yes,"Streams Of Thought, Vol. 3: Cane And Abel",13,17154[m
+[32m+[m[32mHustlehearted1,Kur,none,yes,New project from Kur - It Shouldn't Be Like This available now on DatPiff!,no,,,9615,11,4,10/16/2020,yes,It Shouldn't Be Like This,12,20433[m
+[32m+[m[32mHustlehearted1,Yung Bleu,none,yes,New project from Yung Bleu - Love Scars The 5 Stages Of Emotions (Deluxe) available now on DatPiff!,no,,,10625,5,4,10/16/2020,yes,Love Scars: The 5 Stages Of Emotions (deluxe),3,29446[m
+[32m+[m[32mHustlehearted1,Webbie,none,yes,New project from Webbie - Savage Life 6 available now on DatPiff!,no,,,17074,21,4,10/16/2020,yes,Savage Life 6,9,39320[m
+[32m+[m[32mflybeats09,Sheek Louch,none,yes,"New mixtape from Sheek Louch ""BeastMode 4"" available now on DatPiff!",no,,,32610,22,4,10/16/2020,yes,BeastMode 4,10,82119[m
+[32m+[m[32mHustlehearted1,Wes Krave,none,no,New mixtape from Wes Krave - Winning Streak available now on DatPiff!,yes,21,,325,1,5,10/15/2020,yes,Winning Streak,10,1577[m
+[32m+[m[32mstreetkingpin,Hankroll Perri,exclusive,no,"Croesus Entertainment presents Washington DC's own Hankroll Perri. His latest offering ""King Me '' hosted by the Living Legend Bigga Rankin is available now on all streaming platforms. Featuring stand out singles like the Lead / Title Track ""King Me '' and ""Trappin All Day '' this project is jammed pack with banger after banger, make sure to stay tuned for more updates, follow Hankroll Perri on all social platforms now. https://linktr.ee/hankrollperriÂ Max (302) 724-1347 maxeway@croesusmediallc.com",yes,95,Bigga Rankin,246,2,5,10/13/2020,yes,King Me,12,2451[m
+[32m+[m[32mHustlehearted1,NCG Kenny B,none,yes,New mixtape from NCG Kenny B - Kenny Bccormick (East Park) available now on DatPiff!,no,,,457,3,0,10/13/2020,yes,Kenny Bccormick (East Park),7,1845[m
+[32m+[m[32mHustlehearted1,Bill Waves,none,no,New mixtape from Bill Waves - Yellow Ghost available now on DatPiff!,yes,30,,638,3,3,10/13/2020,yes,Yellow Ghost,8,2511[m
+[32m+[m[32mflybeats09,OBN Jay,sponsored,no,"New EP from OBN Jay ""Pressure Applied"" available now on DatPiff!",yes,135,,2931,7,4,10/10/2020,yes,Pressure Applied EP,6,9418[m
+[32m+[m[32mHustlehearted1,Famous Dex,none,yes,New project from Famous Dex - Diana available now on DatPiff!,no,,,9719,14,3,10/10/2020,yes,Diana,17,19169[m
+[32m+[m[32mHustlehearted1,Cdot Honcho,none,yes,New mixtape from Cdot Honcho - H5 available now on DatPiff!,no,,,3667,6,3,10/9/2020,yes,H5,12,7319[m
+[32m+[m[32mHustlehearted1,Kolyon,none,yes,New mixtape from Kolyon - Rumors Of War available now on DatPiff!,no,,,7334,9,4,10/9/2020,yes,Rumors Of War,16,16259[m
+[32m+[m[32mflybeats09,Papoose,exclusive,no,"New mixtape from Papoose ""Endangered Species"" available now on DatPiff!",yes,1713,,25132,26,4,10/9/2020,yes,Endangered Species,12,72979[m
+[32m+[m[32mHustlehearted1,BlocBoy JB,none,yes,New project from BlocBoy JB - FatBoy available now on DatPiff!,no,,,22282,15,4,10/8/2020,yes,Fatboy,17,41309[m
+[32m+[m[32mHustlehearted1,Ksoo,none,no,New mixtape from Ksoo - Violent Child available now on DatPiff!,no,,,861,5,2,10/9/2020,yes,Violent Child,11,2614[m
+[32m+[m[32mflybeats09,MOW,exclusive,no,"New EP from MOW ""Vengeance"" available now on DatPiff!",yes,98,,892,3,5,10/9/2020,yes,Vengeance,5,3383[m
+[32m+[m[32mHustlehearted1,Lil Loaded,none,yes,New mixtape from Lil Loaded - A Demon In 6lue available now on DatPiff!,no,,,2474,7,3,10/9/2020,yes,A Demon In 6lue,17,5965[m
+[32m+[m[32mHustlehearted1,D-Block Europe,none,yes,New mixtape from D-Block Europe - The Blue Print - Us vs Them available now on DatPiff!,no,,,2669,6,3,10/9/2020,yes,The Blue Print - Us Vs Them,29,7982[m
+[32m+[m[32mHustlehearted1,BandGang Lonnie Bands,none,yes,New mixtape BandGang Lonnie Bands - Antisocial 1.5 available now on DatPiff!,no,,,3043,8,4,10/9/2020,yes,Antisocial 1.5,15,6925[m
+[32m+[m[32mHustlehearted1,Yung Bino,none,yes,New mixtape from Yung Bino - Just Because Ya'll Waited available now on DatPiff!,no,,Hustle Hearted,310,1,0,10/7/2020,yes,Just Because Ya'll Waited,8,1380[m
+[32m+[m[32mflybeats09,Aubrey Omari,none,yes,"New project from Aubrey Omari ""XXI"" available now on DatPiff!",no,,,394,1,0,10/7/2020,yes,XXI,13,2122[m
+[32m+[m[32mflybeats09,Fat Fool,exclusive,no,"New mixtape from Fat Fool ""Rappers & Ball Players"" available now on DatPiff!",yes,202,DJ Holiday,2586,6,3,10/7/2020,yes,Rappers & Ball Players,13,7410[m
+[32m+[m[32mHustlehearted1,Kush3kidd,none,no,New mixtape from Kush3kidd - Still Big Dreaming available now on DatPiff!,yes,32,,289,2,5,10/7/2020,yes,Still Big Dreaming,6,1492[m
+[32m+[m[32mflybeats09,Lupe Fiasco & Soundtrakk,none,no,"New EP from Lupe Fiasco & Soundtrakk ""TAPE TAPE"" available now on DatPiff!",no,,,4555,14,5,10/4/2020,yes,TAPE TAPE,2,16006[m
+[32m+[m[32mHustlehearted1,OG 3Three,none,yes,New project from OG 3Three Never Broke Again - The Appetizer available now on DatPiff!,no,,,1211,4,3,10/4/2020,yes,The Appetizer,14,3612[m
+[32m+[m[32mflybeats09,YG,none,no,,no,,,52179,40,4,10/2/2020,yes,My Life 4hunnid,13,95969[m
+[32m+[m[32m21savage,21 Savage & Metro Boomin,none,no,,no,,,166825,65,4,10/2/2020,yes,Savage Mode II,15,240711[m
+[32m+[m[32mHustlehearted1,MaxThaDemon,none,yes,New mixtape from MaxThaDemon - Demon Season Vol. 3 available now on DatPiff!,no,,,1070,5,2,10/2/2020,yes,Demon Season Vol. 3,9,3150[m
+[32m+[m[32mHustlehearted1,Noodah05,none,yes,New mixtape from noodah05 - Merciless available now on DatPiff!,no,,,2060,7,4,10/2/2020,yes,Merciless,13,4244[m
+[32m+[m[32mHustlehearted1,Rockie Fresh,none,yes,New mixtape from Rockie Fresh - Slid Thru Just to Show You Whats Up available now on DatPiff!,no,,,2905,12,3,10/2/2020,yes,Slid Thru Just To Show You Whats Up,13,7112[m
+[32m+[m[32mflybeats09,Sy Ari Da Kid,sponsored,no,"New mixtape from Sy Ari Da Kid ""3 To 5 Business Days"" available now on DatPiff!",yes,417,,4504,7,5,10/2/2020,yes,3 To 5 Business Days,8,11002[m
+[32m+[m[32mHustlehearted1,Paul Wall,none,yes,New mixtape from Paul Wall - Subculture available now on DatPiff!,no,,,5872,12,5,10/2/2020,yes,Subculture,11,15110[m
+[32m+[m[32mflybeats09,Desean Jackson,exclusive,no,"New mixtape from Desean Jackson ""Against All Odds"" available now on DatPiff!",no,,,7370,10,4,10/2/2020,yes,Against All Odds,11,31849[m
+[32m+[m[32mflybeats09,Yung Bleu,none,no,"New EP from Yung Bleu ""Love Scars: The 5 Stages Of Emotions"" available now on DatPiff!",no,,,7503,10,5,10/2/2020,yes,Love Scars: The 5 Stages Of Emotions,6,17983[m
+[32m+[m[32mHustlehearted1,Larry June & Harry Fraud,none,yes,New mixtape from Larry June & Harry Fraud - Keep Going available now on DatPiff!,no,,,9113,13,4,10/2/2020,yes,Keep Going,10,16924[m
+[32m+[m[32mflybeats09,Lud Foe,none,no,"New mixtape from Lud Foe ""Guns Up Funds Up"" available now on DatPiff!",no,,,10694,10,4,10/2/2020,yes,Guns Up Funds Up,14,18580[m
+[32m+[m[32mHustlehearted1,Smoke DZA,none,yes,New mixtape from Smoke DZA - Homegrown available now on DatPiff!,no,,,8709,14,5,10/1/2020,yes,Homegrown,10,18941[m
+[32m+[m[32mflybeats09,Jeezy & Yo Gotti,exclusive,no,,no,,,32309,27,3,10/1/2020,yes,Back,1,98948[m
+[32m+[m[32mtrapaholics,BigCity Tez,exclusive,no,BigCity Tez- Streets My ATM Hosted by Trap-A-Holics,yes,83,Trap-A-Holics,368,2,5,10/1/2020,yes,Streets My ATM,8,2000[m
+[32m+[m[32mbiggarankin,Respekk,exclusive,no,"Savannah GA artist Respekk's new mixtape E.N.V.Y has 12 solid tracks. Hosted by the OG Bigga Rankin, it's heating up the streets.",yes,50,Bigga Rankin,487,4,4,10/1/2020,yes,E.n.v.y (very Nigga Versus You),12,2236[m
+[32m+[m[32mHustlehearted1,70th Street Carlos,none,no,New mixtape from 70th Street Carlos - Big 70th For President available now on DatPiff!,no,,,674,4,4,10/1/2020,yes,Big 70th For President,6,2473[m
+[32m+[m[32mHustlehearted1,La Gualla,exclusive,yes,New mixtape from La Gualla - No Love Lost available now on DatPiff!,no,,,2381,2,3,9/29/2020,yes,No Love Lost,7,7609[m
+[32m+[m[32mHustlehearted1,Payroll Giovanni,none,yes,New mixtape from Payroll Giovanni - Spirit Of A Boss available now on DatPiff!,no,,,4068,11,4,9/29/2020,yes,Spirit Of A Boss,10,8609[m
+[32m+[m[32mflybeats09,Iman Shumpert,exclusive,no,"NBA's Iman Shumpert & DJ Drama link up for a new Gangsta Grillz mixtape ""Joy Ride"" available now on DatPiff!",no,,DJ Drama,7943,11,3,9/28/2020,yes,Joy Ride: Gangsta Grillz,14,19536[m
+[32m+[m[32mcjames123,Ivory Wade,exclusive,no,,yes,31,,262,1,5,9/29/2020,yes,Bag Talk,8,1600[m
+[32m+[m[32mHustlehearted1,GENIUS,none,yes,New Ep from GENIUS - Back To The Future available now on DatPiff!,no,,,1244,4,4,9/26/2020,yes,Back To The Future,5,4041[m
+[32m+[m[32mflybeats09,ASAP Ferg,none,no,"New album from ASAP Ferg ""Floor Seats II"" available now!",no,,,25143,21,3,9/25/2020,yes,Floor Seats II,10,51679[m
+[32m+[m[32mHustlehearted1,Fredo Bang,none,yes,New project from Fredo Bang - In The Name Of Gee available now on DatPiff!,no,,,35306,20,4,9/25/2020,yes,In The Name Of Gee,15,61426[m
+[32m+[m[32mflybeats09,Tory Lanez,none,no,"New surprise album from Tory Lanez ""Daystar"" available now!",no,,,81651,67,4,9/25/2020,yes,Daystar,17,148480[m
+[32m+[m[32mHustlehearted1,Jaah SLT,none,yes,New mixtape from Jaah SLT - 9-25-20 available now on DatPiff!,no,,,628,1,0,9/25/2020,yes,9/25/2020,10,2219[m
+[32m+[m[32mflybeats09,Camilla,exclusive,no,,yes,86,,1169,5,4,9/25/2020,yes,Misunderstood,10,5723[m
+[32m+[m[32mflybeats09,"Rubberband O.G, Stunna 4 Vegas & Yungeen Ace",none,no,,no,,,1363,2,3,9/25/2020,yes,Bout That Life (Remix),1,7798[m
+[32m+[m[32mHustlehearted1,John Gabbana,none,yes,New EP from John Gabbana - New Beginnings available now on DatPiff!,no,,,1400,8,3,9/25/2020,yes,New Beginnings,5,5150[m
+[32m+[m[32mflybeats09,Action Bronson,none,no,"New project from Action Bronson ""Only For Dolphins"" available now!",no,,,7897,21,4,9/25/2020,yes,Only For Dolphins,12,16822[m
+[32m+[m[32mHustlehearted1,Velli,exclusive,no,New mixtape from Velli - Velli Arising available now on DatPiff!,yes,60,,464,2,5,9/24/2020,yes,Velli Arising,5,2521[m
+[32m+[m[32mHustlehearted1,18Veno,none,yes,New mixtape from 18Veno - Pablo available now on DatPiff!,no,,,745,2,3,9/23/2020,yes,Pablo,11,2374[m
+[32m+[m[32mHustlehearted1,Mozzy,none,yes,New mixtape from Mozzy - Occupational Hazard available now on DatPiff!,no,,,20677,24,5,9/23/2020,yes,Occupational Hazard,14,35695[m
+[32m+[m[32mHustlehearted1,Issa,none,yes,New mixtape from Issa - Summer Falls available now on DatPiff!,no,,,1045,5,1,9/22/2020,yes,Summer Falls,14,3318[m
+[32m+[m[32mHustlehearted1,Da Real Gee Money,exclusive,yes,"New music from Da Real Gee Money ""Ball 4 Ever"" available now exclusively on DatPiff!",no,,,4017,9,4,9/22/2020,yes,Ball 4 Ever,1,13913[m
+[32m+[m[32mHustlehearted1,NoLove Stu,none,no,New mixtape from NoLove Stu - NoLove Letter available now on DatPiff!,yes,37,,493,2,5,9/23/2020,yes,Nolove Letter,10,2309[m
+[32m+[m[32mflybeats09,Coca Vango,exclusive,yes,"New mixtape from Coca Vango ""From Rags To Jugg Riches"" available now on DatPiff!",no,,,12557,33,4,9/21/2020,yes,From Rags To Jugg Riches,18,31156[m
+[32m+[m[32mHustlehearted1,Moneybagg Yo & Blac Youngsta,none,yes,New mixtape from Moneybagg Yo & Blac Youngsta - Code Red available now on DatPiff!,no,,,107065,40,4,9/18/2020,yes,Code Red,13,171058[m
+[32m+[m[32mHustlehearted1,Shyne Grady,none,yes,New mixtape from Shyne Grady - Roses Are Red available now on DatPiff!,no,,,905,1,0,9/19/2020,yes,Roses Are Red,12,2637[m
+[32m+[m[32mHustlehearted1,Mista Cain,none,yes,New mixtape from Mista Cain - CM4: Til My Heart Stop available now on DatPiff!,no,,Hustle Hearted,3425,6,4,9/18/2020,yes,Cm4: Til My Heart Stop,17,7333[m
+[32m+[m[32mHustlehearted1,Problem,none,no,"New mixtape from Problem - Coffee & Kush, Vol. 2 available now on DatPiff!",no,,,5679,10,5,9/18/2020,yes,"Coffee & Kush, Vol. 2",11,13570[m
+[32m+[m[32mHustlehearted1,Toosii,none,yes,New project from Toosii - Poetic Pain available now on DatPiff!,no,,,12777,12,5,9/18/2020,yes,Poetic Pain,17,20887[m
+[32m+[m[32mHustlehearted1,Curren$y & Harry Fraud,none,no,New mixtape from Curren$y & Harry Fraud - The Director's Cut available now on DatPiff!,no,,,22947,38,4,9/18/2020,yes,The Director's Cut,9,41103[m
+[32m+[m[32mflybeats09,Shy Glizzy,none,yes,"New mixtape from Shy Glizzy ""Young Jefe 3"" available  now on DatPiff!",no,,,48290,28,4,9/18/2020,yes,Young Jefe 3,18,71904[m
+[32m+[m[32mHustlehearted1,Bankkroll2ks,exclusive,yes,New mixtape from Bankkroll2ks - Plunder available now on DatPiff!,no,,,1361,5,3,9/17/2020,yes,Plunder,11,7753[m
+[32m+[m[32mHustlehearted1,Skippa Da Flippa,none,yes,New EP from Skippa Da Flippa - Under.Stand.Able available now on DatPiff!,no,,,5792,7,4,9/16/2020,yes,Under.stand.able,6,13540[m
+[32m+[m[32mHustlehearted1,Berner,none,yes,New mixtape from Berner - Russ Bufalino: The Quiet Don available now on DatPiff!,no,,,7922,14,5,9/16/2020,yes,Russ Bufalino: The Quiet Don,18,16064[m
+[32m+[m[32mHustlehearted1,Eldorado Red,none,yes,New mixtape from Eldorado Red - Big Chief Talk available now on DatPiff!,no,,,1371,6,3,9/15/2020,yes,Big Chief Talk,9,3800[m
+[32m+[m[32mHustlehearted1,YN Jay,none,yes,New mixtape from YN Jay - Watch This available now on DatPiff!,no,,,1431,2,3,9/15/2020,yes,Watch This,7,3931[m
+[32m+[m[32mflybeats09,Fbg Duck,none,yes,"New EP from Fbg Duck ""He Back"" available now on DatPiff!",no,,,12181,15,4,9/15/2020,yes,He Back,8,23963[m
+[32m+[m[32mHustlehearted1,Logic,exclusive,no,New instrumental mixtape from Logic available now on DatPiff!,yes,753,,7427,17,4,9/15/2020,yes,Twitchtape Vol.1,5,19666[m
+[32m+[m[32mHustlehearted1,BigKayBeezy,none,yes,New mixtape from BigKayBeezy - Bad Intentions available now on DatPiff!,no,,,1174,4,4,9/16/2020,yes,Bad Intentions,17,3030[m
+[32m+[m[32mHustlehearted1,Quez4Real,none,yes,New mixtape from Quez4Real - Naw 4 Real available now on DatPiff!,no,,,1246,1,0,9/13/2020,yes,Naw 4 Real,12,3048[m
+[32m+[m[32mYungDred,Yung Dred,exclusive,yes,"New mixtape from Yung Dred ""Plaga Montana"" available now exclusively on DatPiff!",no,,,15371,57,4,9/11/2020,yes,Plaga Montana,12,45270[m
+[32m+[m[32mnbayoungboy,YoungBoy Never Broke Again,none,yes,,no,,,84253,40,4,9/11/2020,yes,Top,21,118659[m
+[32m+[m[32mHustlehearted1,26Coop,none,yes,New EP from 26Coop - Motivation to the Younginz available now on DatPiff!,no,,,1661,4,4,9/11/2020,yes,Motivation To The Younginz,5,4730[m
+[32m+[m[32mbobatl,B.o.B,none,yes,"New mixtape from B.o.B ""Somnia"" available now on DatPiff!",no,,,8916,20,4,9/11/2020,yes,Somnia,10,22233[m
+[32m+[m[32mHustlehearted1,Lil Reese,none,yes,New mixtape from Lil Reese - Lamron 1 available now on DatPiff!,no,,,14026,14,4,9/11/2020,yes,Lamron 1,6,29447[m
+[32m+[m[32mHustlehearted1,Hood Brat,none,yes,New mixtape from Hood Brat - Hood Baby available now on DatPiff!,no,,,1837,11,3,9/9/2020,yes,Hood Baby,14,5918[m
+[32m+[m[32mflybeats09,Yowda & Fat Trel,sponsored,no,"New EP from Yowda & Fat Trel ""Fat N Ugly 2"" available now on DatPiff!",yes,311,Trap-A-Holics,6498,9,5,9/8/2020,yes,Fat N Ugly 2 (EP),5,16188[m
+[32m+[m[32mwizkhalifa,Wiz Khalifa,exclusive,no,"WORLD PREMIERE!! New project from Wiz Khalifa ""Big Pimpin"" featuring Curren$y, Chevy Woods, Yoing Deji & production from Harry Fraud, Statik Selektah, Tai & Mufasa.  Big Pimpin available now exclusively on DatPiff!",yes,8796,,312086,81,5,9/8/2020,yes,Big Pimpin',17,416472[m
+[32m+[m[32mHustlehearted1,Cobb,none,no,New mixtape from Cobb - The Good Son Vol. 2 available now on DatPiff!,yes,33,,391,2,5,9/8/2020,yes,The Good Son Vol. 2,6,2247[m
+[32m+[m[32mHustlehearted1,OG Dre,none,yes,New mixtape from OG Dre - Original Genius available now on DatPiff!,no,,,549,3,3,9/8/2020,yes,Original Genius,15,2584[m
+[32m+[m[32mHustlehearted1,Jacquees,none,no,New mixtape from Jacquees - Exit 68 available now on DatPiff!,no,,,54821,22,4,9/7/2020,yes,Exit 68,16,73186[m
+[32m+[m[32mHustlehearted1,Pap Chanel,none,yes,New mixtape from Pap Chanel - Pretty & Paid available now on DatPiff!,no,,,1199,5,4,9/4/2020,yes,Pretty & Paid,7,4488[m
+[32m+[m[32mHustlehearted1,WillThaRapper,none,yes,New mixtape from WillThaRapper - Peace Of My Pain 2 available now on DatPiff!,no,,,2445,7,3,9/4/2020,yes,Peace Of My Pain 2,10,7859[m
+[32m+[m[32mflybeats09,Big Sean,none,yes,"The highly anticipated sequel to ""Detroit"" from Big Sean is available now on DatPiff!",no,,,111034,71,5,9/4/2020,yes,Detroit 2,21,171853[m
+[32m+[m[32mHustlehearted1,Blaze Bar$,none,no,New mixtape from Blaze Bar$ - Make America Trap Again (hosted by DJ Drama) available now on DatPiff!,yes,29,DJ Drama,206,1,5,9/4/2020,yes,Make America Trap Again,16,2211[m
+[32m+[m[32mHustlehearted1,Johnny Boyie,none,no,New mixtape from Johnny Boyie - Time Invested available now on DatPiff!,yes,32,,790,2,3,9/4/2020,yes,Time Invested,8,3074[m
+[32m+[m[32mHustlehearted1,Big Havi,none,yes,New mixtape from Big Havi - Personal Problems 2 available now on DatPiff!,no,,,901,2,3,9/4/2020,yes,Personal Problems 2,11,3342[m
+[32m+[m[32mHustlehearted1,LightSkinKeisha,none,yes,New mixtape from LightSkinKeisha - Clones available now on DatPiff!,no,,,1822,9,3,9/2/2020,yes,Clones,10,6776[m
+[32m+[m[32mHustlehearted1,Lil 2z,none,yes,New mixtape from Lil 2z - Ashes 2 Ashes available now on DatPiff!,no,,,1426,6,3,9/3/2020,yes,Ashes 2 Ashes,11,3426[m
+[32m+[m[32mHustlehearted1,Audio Push,none,yes,New EP from Audio Push - No Rest...For the Blessed II available now on DatPiff!,no,,,1102,9,4,8/30/2020,yes,No Rest...for The Blessed II,6,3709[m
+[32m+[m[32mHustlehearted1,Young Deji,none,yes,"New mixtape from Young Deji ""Lil Woah"" available now on datPiff!",no,,,1264,5,3,8/30/2020,yes,Lil Woah,14,3833[m
+[32m+[m[32mHustlehearted1,Nyketown Ju,none,yes,New mixtape from Nyketown Ju -  Pyrex Pots & Broken Hearts available now on DatPiff!,no,,,129,1,0,8/30/2020,yes,Pyrex Pots & Broken Hearts,15,1214[m
+[32m+[m[32mHustlehearted1,The Lox,none,yes,New project from The Lox - Living Off Xperience available now on DatPiff!,no,,,81522,46,4,8/28/2020,yes,Living Off Xperience,14,110909[m
+[32m+[m[32mHustlehearted1,KenTheMan,none,yes,New mixtape from KenTheMan - 4 Da 304's available now on DatPiff!,no,,,775,3,2,8/29/2020,yes,4 Da 304's,10,2860[m
+[32m+[m[32mHustlehearted1,Saigon,none,yes,"New EP from Saigon ""777: The Resurrection"" available now on DatPiff!",no,,,2598,10,5,8/29/2020,yes,777: The Resurrection,7,6848[m
+[32m+[m[32mHustlehearted1,OLAH ONLY,none,no,New mixtape from OLAH ONLY - Broke My Guitar available now on DatPiff!,yes,82,,989,2,3,8/28/2020,yes,Broke My Guitar,6,4193[m
+[32m+[m[32mHustlehearted1,AD,none,yes,"New EP from AD ""Julio Nights"" available now on DatPiff!",no,,,2321,6,3,8/28/2020,yes,Julio Nights,6,5595[m
+[32m+[m[32mHustlehearted1,Daniel Heartless,exclusive,no,New mixtape from Daniel Heartless - No Love Lost Vol.1 available now on DatPiff!,yes,153,,2529,5,4,8/28/2020,yes,No Love Lost Vol.1,9,6268[m
+[32m+[m[32mflybeats09,Wifisfuneral,none,no,"New mixtape from Wifisfuneral ""Pain?"" available now on DatPiff!",no,,,3533,8,3,8/28/2020,yes,Pain?,14,7345[m
+[32m+[m[32mflybeats09,Luh Soldier & Big Yavo,sponsored,no,"New mixtape from Luh Soldier & Big Yavo ""Gorilla Warfare"" available now on DatPiff!",yes,240,,5795,10,5,8/28/2020,yes,Gorilla Warfare,8,9687[m
+[32m+[m[32mflybeats09,VIC MENSA,none,yes,,no,,,6166,15,3,8/28/2020,yes,V TAPE,7,15914[m
+[32m+[m[32mflybeats09,Trouble X MMB,exclusive,no,"New mixtape from Trouble x MMB ""The Introduction"" available now on DatPiff!",yes,463,,17760,13,3,8/28/2020,yes,The Introduction,26,46650[m
+[32m+[m[32mHustlehearted1,Jackboy,none,yes,New project from Jackboy - Living In History available now on DatPiff!,no,,,25454,15,5,8/28/2020,yes,Living In History,14,33806[m
+[32m+[m[32mHustlehearted1,Yung Bleu,none,yes,"New project from Yung Bleu ""Bleu Vandross 3"" available now on DatPiff!",no,,,28672,16,4,8/28/2020,yes,Bleu Vandross 3,17,35874[m
+[32m+[m[32mHustlehearted1,Pasto Flocco,none,yes,New EP from Pasto Flocco - RED TENDENCIES available now on DatPiff!,no,,,883,5,2,8/26/2020,yes,Red Tendencies,3,3058[m
+[32m+[m[32mHustlehearted1,Quando Rondo,none,yes,New project from Quando Rondo - Diary of a Lost Child available now on DatPiff!,no,,,34975,25,4,8/26/2020,yes,Diary Of A Lost Child,16,43389[m
+[32m+[m[32mHustlehearted1,CashTalk,none,yes,"New mixtape from CashTalk ""Ghetto Children"" available now on DatPiff!",no,,,2939,4,3,8/25/2020,yes,Ghetto Children,12,5130[m
+[32m+[m[32mHustlehearted1,VL Deck,none,no,"New mixtape from VL Deck ""Trap Pastor 3"" available now on DatPiff!",yes,153,Ferrari Simmons,5329,8,5,8/25/2020,yes,Trap Pastor 3,15,7443[m
+[32m+[m[32mHustlehearted1,OBN Dev,none,yes,New EP from OBN Dev - Fraud Files available now on DatPiff!,no,,,1447,5,2,8/22/2020,yes,Fraud Files,6,3595[m
+[32m+[m[32mHustlehearted1,Devinelli,none,no,New mixtape from Devinelli - Love Hard Or Fall Hard available now on DatPiff!,yes,35,,1682,2,3,8/22/2020,yes,Love Hard Or Fall Hard,10,3502[m
+[32m+[m[32mHustlehearted1,Lecrae,none,yes,New project from Lecrae - Restoration available now on DatPiff!,no,,,13965,10,5,8/21/2020,yes,Restoration,14,19243[m
+[32m+[m[32mHustlehearted1,Derez De'Shon,none,yes,New project from Derez De'Shon - Pain 3 available now on DatPiff!,no,,,72091,25,4,8/21/2020,yes,Pain 3,19,67228[m
+[32m+[m[32mHustlehearted1,Dee Watkins,none,yes,New project from Dee Watkins - Problem Child 2 available now on DatPiff!,no,,,13705,5,4,8/20/2020,yes,Problem Child 2,14,15664[m
+[32m+[m[32mHustlehearted1,Jayy Grams,none,no,New mixtape from Jayy Grams - Red Interior Freestyles available now on DatPiff!,yes,46,,1347,2,5,8/20/2020,yes,Red Interior Freestyles,5,3322[m
+[32m+[m[32mHustlehearted1,Kj Balla,none,yes,New project from Kj Balla - Resurrection available now on DatPiff!,no,,,3952,6,3,8/20/2020,yes,Resurrection,14,7139[m
+[32m+[m[32mflybeats09,Various Artists,exclusive,no,Ghost Bars Presented By STYLES P Featuring Some Of The Hardest MCs From Across The Globe All On One Project!,yes,286,,11279,4,4,8/19/2020,yes,Ghost Bars,31,21552[m
+[32m+[m[32mflybeats09,Various Artists,exclusive,no,,yes,352,,5272,4,4,8/19/2020,yes,Ghost Bars 1.5,24,12005[m
+[32m+[m[32mflybeats09,Trinidad James & Fyre.,sponsored,no,"New mixtape from Trinidad James & Fyre. ""Black Filter"" available now on DatPiff!",yes,414,,16039,13,2,8/16/2020,yes,Black Filter,13,20767[m
+[32m+[m[32mHustlehearted1,TeeJayx6,none,no,New mixtape from TeeJayx6 - X6 available now on DatPiff!,no,,,6759,12,1,8/15/2020,yes,X6,13,10816[m
+[32m+[m[32mflybeats09,Dame D.O.L.L.A.,sponsored,no,"New EP from Dame D.O.L.L.A. ""Live From The Bubble"" available now on DatPiff!",yes,640,,38728,22,4,8/15/2020,yes,Live From The Bubble,4,50583[m
+[32m+[m[32mHustlehearted1,Ransom,none,yes,New project from Ransom - Directors Cut Scene 3 available now on DatPiff!,no,,,24037,18,4,8/14/2020,yes,Directors Cut Scene 3,10,30046[m
+[32m+[m[32mflybeats09,Young Dolph,none,yes,,no,,,134137,66,5,8/14/2020,yes,Rich Slave,16,120662[m
+[32m+[m[32mHustlehearted1,03 Greedo & Ron-RonTheProducer,exclusive,yes,New project from 03 Greedo & Ron-RonTheProducer - Load It Up Vol. 01 available now on DatPiff!,no,,,8844,13,3,8/13/2020,yes,Load It Up Vol. 01,19,14137[m
+[32m+[m[32mHustlehearted1,Dave East,none,yes,New project from Dave East - Karma 3 available now on DatPiff!,no,,,326125,90,5,8/13/2020,yes,Karma 3 (Deluxe),23,311294[m
+[32m+[m[32mHustlehearted1,Bigg Rod & AMP Wayne,none,no,New mixtape from Bigg Rod & AMP Wayne - Bout Time available now on DatPiff!,yes,30,,209,1,5,8/14/2020,yes,Bout Time,9,2107[m
+[32m+[m[32mHustlehearted1,Tommy Poe,none,no,New mixtape from Tommy Poe - Poe Man's Dream available now on DatPiff!,yes,51,,1502,1,5,8/14/2020,yes,Poe Man's Dream,9,3351[m
+[32m+[m[32mHustlehearted1,Trenacote Shawty,none,no,New mixtape from Trenacote Shawty - 2 Real 4 The Industry available now on DatPiff!,yes,53,,1884,5,4,8/14/2020,yes,2 Real 4 The Industry,14,3319[m
+[32m+[m[32mHustlehearted1,YN Jay,none,yes,New mixtape from YN Jay - Coochie Land available now on DatPiff!,no,,,4409,5,3,8/14/2020,yes,Coochie Land,10,8108[m
+[32m+[m[32mHustlehearted1,TEC,none,yes,New mixtape from TEC - 8 Legged Explosive available now on DatPiff!,no,,,16507,16,3,8/14/2020,yes,8 Legged Explosive,16,18161[m
+[32m+[m[32mHustlehearted1,Trav,none,yes,New mixtape from Trav - Nothing Happens Overnight available now on DatPiff!,no,,,17122,11,3,8/14/2020,yes,Nothing Happens Overnight,12,19093[m
+[32m+[m[32mhustlehearted,Friday Fontana,exclusive,no,New mixtape from Friday Fontana - Underdog available now on DatPiff!,yes,166,,4107,5,4,8/11/2020,yes,Underdog,10,8227[m
+[32m+[m[32mhustlehearted,2FeetBino,none,yes,New mixtape from 2FeetBino - A Story Never Told available now on DatPiff!,no,,,2055,1,0,8/10/2020,yes,A Story Never Told,14,3787[m
+[32m+[m[32mhustlehearted,C Struggs,none,yes,"New mixtape from C Struggs ""Brad Jordan Jr"" available now on DatPiff!",no,,,11371,9,5,8/10/2020,yes,Brad Jordan Jr,13,12464[m
+[32m+[m[32mflybeats09,Rod Wave,none,no,"New mixtape from Rod Wave ""Pray 4 Love"" Deluxe version available now on DatPiff!",no,,,98777,30,5,8/7/2020,yes,Pray 4 Love (Deluxe),25,89015[m
+[32m+[m[32mhustlehearted,Bobby Fishscale,none,yes,"New mixtape from Bobby Fishscale ""The Last Re-Up"" available now on DatPiff!",no,,,17907,8,4,8/8/2020,yes,The Last Re-up,8,21597[m
+[32m+[m[32mflybeats09,Amine,none,no,,no,,,13934,20,4,8/7/2020,yes,Limbo,14,19295[m
+[32m+[m[32mhustlehearted,Boogotti Kasino,none,yes,New mixtape from Boogotti Kasino - 1638 : Life's a Gamble available now on DatPiff!,no,,,16391,8,4,8/7/2020,yes,1638 : Life's A Gamble,15,19169[m
+[32m+[m[32mhustlehearted,NLE Choppa,none,yes,"New project from NLE Choppa ""Top Shotta"" available now on DatPiff!",no,,,42731,37,3,8/7/2020,yes,Top Shotta,20,45125[m
+[32m+[m[32mhustlehearted,Lil Keed,none,yes,"New project from Lil Keed ""Trapped on Cleveland 3"" available now on DatPiff!",no,,,64657,37,4,8/7/2020,yes,Trapped On Cleveland 3,19,64463[m
+[32m+[m[32mflybeats09,FCG Heem,sponsored,no,"New EP from FCG Heem ""Street Virus"" available now on DatPiff!",yes,99,,2479,3,3,8/7/2020,yes,Street Virus EP,4,5673[m
+[32m+[m[32mflybeats09,Dj The Rapper,none,no,"New mixtape from Dj The Rapper ""Problem Child"" available now on DatPiff!",no,,,5481,4,4,8/7/2020,yes,Problem Child,12,7532[m
+[32m+[m[32mhustlehearted,RoadRunner Savy,none,yes,"New EP from RoadRunner Savy ""Exit 5"" available now on DatPiff!",no,,,787,2,5,8/7/2020,yes,Exit 5,5,2843[m
+[32m+[m[32mhustlehearted,VD Route Kiro,sponsored,no,New mixtape from VD Route Kiro - Pick 5 available now on DatPiff!,yes,57,,1597,4,1,8/7/2020,yes,Pick 5,6,3982[m
+[32m+[m[32mstreetkingpin,Only1Skoota,exclusive,yes,"Easy Street Family Presents Atlanta, GA. rapper and recording artist Only1Skoota. Fresh off a successful release for ""Really Rich"" the ""Westside"" native is back with another full length project to keep you vining through the summer. 11 Tracks of non-stop bangers this project is sure to deliver on that hot sound you've come to expect from this rising superstar. Taking over the Atlanta HipHop scene was easy, no it's time for the world to get their ""Weight Up"" available on all streaming platforms ""Weight Up"" https://untd.io/r/AAFUwvvEi8X7 contact: Esf.familyinc@gmail.com All Links: http://www.linktr.ee/only1skoota",no,,,4506,6,4,8/3/2020,yes,Weight Up,11,9652[m
+[32m+[m[32mhustlehearted,Various Artists,sponsored,no,New mixtape from CutMaster C - Simplify Your Life available now on DatPiff YouTube!,yes,60,CUTMASTER C,713,1,0,8/3/2020,yes,Simplify Your Life,18,4872[m
+[32m+[m[32mkdough,Various Artists,none,yes,,no,,Traps-N-Trunks,21112,10,4,8/2/2020,yes,Strictly 4 The Traps N Trunks (Long Live Bankroll Fresh Edition 5),21,29244[m
+[32m+[m[32mhustlehearted,Jonesy Boy,none,no,New mixtape from Jonesy Boy - I'm Innocent 2 available now on DatPiff!,yes,19,,160,0,0,8/3/2020,yes,I'm Innocent 2,14,2294[m
+[32m+[m[32mhustlehearted,Benny The Butcher,none,no,New mixtape from Benny The Butcher & DJ Drama - Black Soprano Family available now on DatPiff!,no,,DJ Drama,46106,51,5,8/1/2020,yes,Black Soprano Family,8,51995[m
+[32m+[m[32mflybeats09,La Gualla,exclusive,no,"New mixtape from La Gualla ""Gualla Season"" available now on DatPiff!",yes,146,,2952,10,2,8/1/2020,yes,Gualla Season,12,8685[m
+[32m+[m[32mhustlehearted,"Hit-Boy, Dom Kennedy & Courtesy Of Half-a-mil",none,no,"New project mixtape from Hit-Boy, Dom Kennedy & Courtesy of half-a-mil - Also Known As available now on DatPiff!",no,,,14368,29,5,7/31/2020,yes,Also Known As,11,21477[m
+[32m+[m[32mwizkhalifa,Wiz Khalifa,exclusive,no,"The 3rd single off Wiz Khalifa's upcoming mixtape ""Big Pimpin"" available now exclusively on DatPiff!",yes,1241,Taylor Gang,39216,43,3,7/31/2020,yes,Top Down (Single),1,70905[m
+[32m+[m[32mhustlehearted,SODLiMan,none,yes,New mixtape from SODLiMan - Yung Rich & Federal available now on DatPiff!,no,,,2084,2,3,7/31/2020,yes,Yung Rich & Federal,17,4791[m
+[32m+[m[32mskullygod,Skully God,sponsored,no,Skully God's sophomore mixtape.,no,,,2430,4,4,7/31/2020,yes,Ice Dad,6,5516[m
+[32m+[m[32mflybeats09,Sleepy Hallow,none,no,"New EP from Sleepy Hallow ""The Black House"" available now on DatPiff!",no,,,7792,9,4,7/31/2020,yes,The Black House,5,12173[m
+[32m+[m[32mhustlehearted,LilCJ Kasino,none,yes,New mixtape from LilCJ Kasino - N.I.K.E. available now on DatPiff!,no,,DJ Scream,8061,15,3,7/31/2020,yes,N.i.k.e.,15,12309[m
+[32m+[m[32mflybeats09,Desiigner,none,no,"New EP from Desiigner ""Diamonds Forever"" available now on DatPiff!",no,,,11300,25,4,7/31/2020,yes,Diamonds Forever,2,22017[m
+[32m+[m[32mhustlehearted,901 Trapboi,sponsored,no,"New mixtape from 901 Trapboi ""Trap Back 2"" available now on DatPiff!",yes,92,,1446,2,3,7/30/2020,yes,Trap Back 2,9,4245[m
+[32m+[m[32mhustlehearted,JReady,sponsored,no,New mixtape from Jready - Jready Caesar available now on DatPiff!,yes,13,,51,0,0,7/30/2020,yes,Jready Caesar,12,2405[m
+[32m+[m[32mhustlehearted,Dope Official,sponsored,no,New mixtape from Dope Official - Living Through My Sins available now on DatPiff!,yes,19,,51,0,0,7/30/2020,yes,Living Through My Sins,15,2136[m
+[32m+[m[32mhustlehearted,KDSoHell,sponsored,no,New mixtape from KDSoHell - Been Havin' available now on DatPiff!,yes,31,,61,0,0,7/30/2020,yes,Been Havin',10,2182[m
+[32m+[m[32mhustlehearted,Lil Stoney,sponsored,no,New mixtape from Lil Stoney - Molly And E&J available now on DatPiff!,yes,34,,109,2,5,7/30/2020,yes,Molly And E&j,10,2272[m
+[32m+[m[32mhustlehearted,Soulja Boy,none,yes,New mixtape from Soulja Boy - King Soulja 9 available now on DatPiff!,no,,SODMG,13762,49,3,7/28/2020,yes,King Soulja 9,11,21460[m
+[32m+[m[32mhustlehearted,TeeJay3k,none,yes,New EP from TeeJay3k - Introvert: Side B available now on DatPiff!,no,,,1850,6,4,7/29/2020,yes,Introvert: Side B,4,5437[m
+[32m+[m[32mtrapaholics,YFN Traepound,none,no,YFN Traepound- Airborne Hosted by Trap-A-Holics,yes,203,Trap-A-Holics,4157,9,3,7/26/2020,yes,Airborne,16,7922[m
+[32m+[m[32mDJYoungShawn,Ant200,exclusive,no,"Follow @Ant200, @DJ_YoungShawn, & @DJKingDream",yes,250,"DJ Young Shawn, DJ King Dream",4078,18,4,7/25/2020,yes,I Don't Know Nothing 3,7,9197[m
+[32m+[m[32mflybeats09,420 Stunna,exclusive,no,"New mixtape from 420 Stunna ""Stunnavelli"" available now on DatPiff!",yes,339,,10515,21,1,7/25/2020,yes,Stunnavelli,8,18287[m
+[32m+[m[32mflybeats09,The Kid LAROI,none,yes,,no,,,23998,74,4,7/24/2020,yes,F*CK LOVE,15,36083[m
+[32m+[m[32mflybeats09,Calboy,none,yes,"New mixtape from Calboy ""Long Live The Kings (Deluxe)"" available now on DatPiff!",no,,,35313,44,4,7/24/2020,yes,Long Live The Kings (Deluxe),12,43110[m
+[32m+[m[32mflybeats09,Sada Baby,none,yes,"New mixtape from Sada Baby ""Bartier Bounty 2"" available now on DatPiff!",no,,,42886,94,4,7/24/2020,yes,Bartier Bounty 2,18,53208[m
+[32m+[m[32mflybeats09,Curren$y & Harry Fraud,none,yes,"New mixtape from Curren$y & Harry Fraud ""The OutRunners"" available now on DatPiff!",no,,,121916,236,5,7/24/2020,yes,The OutRunners,9,123155[m
+[32m+[m[32mhustlehearted,Since99,none,yes,New mixtape from Since99 - 99 Overall available now on DatPiff!,no,,,904,18,3,7/24/2020,yes,99 Overall,14,5727[m
+[32m+[m[32mflybeats09,Buckem & Juugman,sponsored,no,"New EP from Buckem & Juugman ""Solid Juugin"" available now on DatPiff!",yes,100,,1348,7,4,7/24/2020,yes,Solid Juugin,5,5503[m
+[32m+[m[32mflybeats09,Nuski2Squad,none,yes,"New mixtape from Nuski2Squad ""Lost Child"" available now on DatPiff!",no,,,1884,14,5,7/24/2020,yes,Lost Child,15,6470[m
+[32m+[m[32mhustlehearted,Baby Yungin,none,yes,New mixtape from Baby Yungin - Life Of A Soldier available now on DatPiff!,no,,,2241,21,5,7/24/2020,yes,Life Of A Soldier,12,7007[m
+[32m+[m[32mflybeats09,Dirty Tay,sponsored,no,"New mixtape from Dirty Tay ""Too Turnt Up"" available now on DatPiff!",yes,410,,7837,27,4,7/24/2020,yes,Too Turnt Up,15,13395[m
+[32m+[m[32mflybeats09,Peso Peso,none,yes,"New mixtape from Peso Peso ""Mi Vida Loka"" available now on DatPiff!",no,,,10526,57,4,7/24/2020,yes,Mi Vida Loka,12,17668[m
+[32m+[m[32mflybeats09,Lupe Fiasco,none,yes,"New EP from Lupe Fiasco ""House"" available now on DatPiff!",no,,,18993,96,4,7/24/2020,yes,House (EP),5,40142[m
+[32m+[m[32mflybeats09,Richie Wess,exclusive,yes,"New mixtape from Richie Wess ""Trained To Go"" available now on DatPiff!",no,,,2576,21,3,7/22/2020,yes,Trained To Go,10,10031[m
+[32m+[m[32mkdough,Juliano,exclusive,yes,,no,,,167,2,5,7/19/2020,yes,Spiritual Warfare,7,4344[m
+[32m+[m[32mhustlehearted,Baby Smoove,none,yes,New mixtape from Baby Smoove - Im Still Perfect available now on DatPiff!,no,,,2670,14,4,7/19/2020,yes,Im Still Perfect,15,7749[m
+[32m+[m[32mKPReilly02,Wiz Khalifa Ft. Bootsyano,exclusive,no,"New single from Wiz Khalifa ""Smoke Screen"" featuring Bootsyano off his upcoming mixtape!",no,,Taylor Gang,29278,136,4,7/17/2020,yes,Smoke Screen (Single),1,76409[m
+[32m+[m[32mflybeats09,OBN Jay,none,yes,"New mixtape from OBN Jay ""No Commercial Breaks"" available now on DatPiff!",no,,,4305,21,3,7/17/2020,yes,No Commercial Breaks,12,12040[m
+[32m+[m[32mhustlehearted,Q Da Fool,none,yes,New mixtape from Q Da Fool - Deaf Wish available now on DatPiff!,no,,,4541,32,4,7/17/2020,yes,Deaf Wish,8,12169[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,399,,4918,12,5,7/17/2020,yes,East Side Raps (series Presented By Dave East),51,16119[m
+[32m+[m[32mflybeats09,Sheff G,none,no,"New mixtape from Sheff G ""Just 4 Yall"" available now on DatPiff!",no,,,12422,64,4,7/17/2020,yes,Just 4 Yall,5,21933[m
+[32m+[m[32mflybeats09,600 Breezy,none,yes,"New project from 600 Breezy ""Iceman Edition 2"" available now on DatPiff!",no,,,14331,54,3,7/17/2020,yes,Iceman Edition 2,10,29605[m
+[32m+[m[32mflybeats09,Joey Bada$$,none,yes,"New EP from Joey Bada$$ ""The Light Pack"" available now on DatPiff!",no,,,21618,175,4,7/17/2020,yes,The Light Pack,3,50253[m
+[32m+[m[32mgotinstrumental,Cooli Highh,exclusive,no,Here is a 9 HRS by Cooli Highh. Hosted by DJ  V.I.P.,yes,297,DJ  V.I.P.,3128,22,4,7/17/2020,yes,9 Hrs,17,9829[m
+[32m+[m[32mhustlehearted,Sleepy Rose,sponsored,yes,"New mixtape from Sleepy Rose ""Ethereal Hell Edition"" available now on DatPiff!",no,,,1720,12,4,7/16/2020,yes,Ethereal Hell Edition,10,8859[m
+[32m+[m[32mhustlehearted,Icewear Vezzo,none,yes,New mixtape from Icewear Vezzo - Robbin Season 2 available now on DatPiff!,no,,,16454,49,4,7/16/2020,yes,Robbin Season 2,16,31115[m
+[32m+[m[32mflybeats09,NoCap,none,yes,,no,,,65345,120,4,7/16/2020,yes,Steel Human,16,70438[m
+[32m+[m[32mhustlehearted,Ocho Sneak,none,yes,New EP from Ocho Sneak - Hunger Story 2 available now on DatPiff!,no,,,949,10,4,7/17/2020,yes,Hunger Story 2,6,6874[m
+[32m+[m[32mhustlehearted,ELVy The God,none,yes,New mixtape from eLVy The God - Brainiac Music available now on DatPiff!,no,,,1284,18,4,7/17/2020,yes,Brainiac Music,11,7098[m
+[32m+[m[32mhustlehearted,Bloody Jay,sponsored,no,"New mixtape from Bloody Jay ""Happy Birthday Tribute"" available now on DatPiff!",yes,255,,4189,14,4,7/15/2020,yes,Happy Birthday Tribute,22,9422[m
+[32m+[m[32mflybeats09,Woop & 9lokknine,sponsored,no,"New mixtape from Woop & 9lokknine ""7-14 14-7"" available now on DatPiff!",yes,1030,,23872,51,4,7/14/2020,yes,7-14 14-7,6,35730[m
+[32m+[m[32mhustlehearted,Gerald Walker,none,yes,"New mixtape from Gerald Walker ""What Happened In Between..."" available now on DatPiff!",no,,,2522,23,4,7/14/2020,yes,What Happened In Between...,4,10977[m
+[32m+[m[32mhustlehearted,RoadRunner TB,none,yes,,no,,,2475,14,4,7/13/2020,yes,Mind Of The Blender,11,8556[m
+[32m+[m[32mflybeats09,L.A.D Aka LA The Darkman,exclusive,no,,yes,1960,,16619,77,5,7/11/2020,yes,Wu La Familia,24,32633[m
+[32m+[m[32mflybeats09,UnoTheActivist,none,no,"New mixtape from UnoTheActivist ""8"" available now on DatPiff!",no,,,7258,56,4,7/10/2020,yes,8,18,17847[m
+[32m+[m[32mflybeats09,Casey Veggies & Rockie Fresh,none,no,"New mixtape from Casey Veggies & Rockie Fresh ""Fresh Veggies 2"" available now on DatPiff!",no,,,15406,109,4,7/10/2020,yes,Fresh Veggies 2,14,33413[m
+[32m+[m[32mflybeats09,Tory Lanez,none,no,"New EP from Tory Lanez ""The VVS Capsule"" available now on DatPiff!",no,,,42339,139,4,7/10/2020,yes,The VVS Capsule (EP),2,91212[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,"If you need marketing, blogs, and or a official website for your music hit up @520promotions on Instagram",yes,574,,8617,20,5,7/9/2020,yes,Back To The Streets (Series Presented By Jadakiss),51,28074[m
+[32m+[m[32mflybeats09,Fresho Franklin,sponsored,no,"New mixtape from Fresho Franklin ""18KG"" available now on DatPiff!",yes,121,,1810,17,3,7/8/2020,yes,18KG,6,5862[m
+[32m+[m[32mhustlehearted,SahBabii,none,yes,"New mixtape from SahBabii ""Barnacles"" avaialble now on DatPiff!",no,,,17665,87,4,7/8/2020,yes,Barnacles,16,28542[m
+[32m+[m[32mhustlehearted,Shyne Grady,none,no,"New mixtape from Shyne Grady ""Bittersweet"" available now on DatPiff!",no,,,1737,9,3,7/9/2020,yes,Bittersweet,12,5354[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,834,,7782,20,5,7/9/2020,yes,Back To The Streets Vol 2 (series Presented By Jadakiss),50,20158[m
+[32m+[m[32mflybeats09,Wiz Khalifa,exclusive,no,,no,,,76249,501,4,7/7/2020,yes,Slim Peter,1,172452[m
+[32m+[m[32mHustlehearted1,G$ Lil Ronnie,none,yes,,no,,Hoodfame,6636,51,4,7/7/2020,yes,GGA 3 (Gang Gang Activity),13,15707[m
+[32m+[m[32mAloxNJ,Moet Diaz,exclusive,no,New self titled EP from Moet Diaz available now on DatPiff!,yes,729,,9869,85,4,7/7/2020,yes,Moet Diaz,7,25731[m
+[32m+[m[32mflybeats09,Ceezy,exclusive,no,"New project from Ceezy ""Sixth Man Of The Year"" available now on DatPiff!",yes,68,,275,4,4,7/6/2020,yes,Sixth Man Of The Year,10,3759[m
+[32m+[m[32mflybeats09,Jose Guapo,sponsored,no,"New mixtape from Jose Guapo ""Baby Face Nelson"" Hosted by Bigga Rankin available now on DatPiff!",yes,841,Bigga Rankin,12588,65,4,7/6/2020,yes,Baby Face Nelson,12,23264[m
+[32m+[m[32mflybeats09,Chevy Woods,exclusive,yes,"New mixtape from Chevy Woods ""Since Birth"" available now on DatPiff!",no,,,35012,129,4,7/3/2020,yes,Since Birth,14,53864[m
+[32m+[m[32mflybeats09,Devinnci,sponsored,no,"New mixtape from Devinnci ""Penitentiary Chances"" available now on DatPiff!",yes,985,,1848,9,3,7/3/2020,yes,Penitentiary Chances,9,6088[m
+[32m+[m[32mflybeats09,Falcon The God,exclusive,no,"New mixtape from Falcon The God ""City Of Dogs"" available now on DatPiff!",yes,223,,2521,29,3,7/3/2020,yes,City Of Dogs,10,14481[m
+[32m+[m[32mhustlehearted,Rich Espy,none,no,,no,,Hustle Hearted,2810,49,4,7/3/2020,yes,Rich B4 Rap,10,26494[m
+[32m+[m[32mflybeats09,Seven7Hardaway,none,yes,"New project from TBG artist Seven7Hardaway ""7X"" available now on DatPiff!",no,,TBG,10168,23,4,7/3/2020,yes,7x,7,16975[m
+[32m+[m[32mflybeats09,Philthy Rich,none,yes,"New mixtape from Philthy Rich ""Real Hate"" available now on DatPiff!",no,,,15180,68,4,7/3/2020,yes,Real Hate,18,26380[m
+[32m+[m[32mflybeats09,K CAMP & RARE Sound,none,no,"New mixtape from K CAMP & RARE Sound ""RARE Family"" available now on DatPiff!",no,,,20375,102,4,7/3/2020,yes,RARE Family,12,49887[m
+[32m+[m[32mflybeats09,Westside Gunn,none,no,"New mixtape from Westside Gunn ""Flygod Is An Awesome God 2""",no,,,22625,138,4,7/3/2020,yes,Flygod Is An Awesome God 2,14,37928[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,135,,1621,11,4,7/2/2020,yes,Barking To The Streets Vol 2 (series Presented By Bow Wow),50,8773[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,170,,1846,9,3,7/2/2020,yes,Barking To The Streets Vol 3 (series Presented By Bow Wow),36,9191[m
+[32m+[m[32mflybeats09,PimpDaddyPuff,exclusive,no,"New project from PimpDaddyPuff ""Nothing 2 Lose"" available now on DatPiff!",yes,195,,3056,13,2,7/1/2020,yes,Nothing 2 Lose,12,9123[m
+[32m+[m[32mflybeats09,Various Artists,exclusive,no,"Who Got Next 2.0 hosted by Jadakiss: 30 of the hottest up and coming artists are showcased from across the country stamped by the one and only Top 5 Doa, Jadakiss!",yes,997,Jadakiss,9838,45,4,7/1/2020,yes,Who Got Next 2.0,41,36161[m
+[32m+[m[32mflybeats09,Big Homiie G,exclusive,no,"New project from Big Homiie G ""Big Homiie Status 2"" available now on DatPiff!",yes,1094,NLess Ent,29202,69,4,7/1/2020,yes,Big Homiie Status 2,12,36132[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,126,,983,5,5,7/1/2020,yes,Game Over Vol 4 (series Presented By The Game),51,5320[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,125,,1025,6,4,7/1/2020,yes,Game Over Vol 6 (series Presented By The Game),56,5811[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,138,,1051,9,4,7/1/2020,yes,Game Over Vol 5 (series Presented By The Game),51,6694[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,161,,1085,6,5,7/1/2020,yes,Game Over Vol 3 (series Presented By The Game),49,10922[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,"If you need marketing, blogs, and or a official website for your music hit up @520promotions on Instagram",yes,103,,2492,17,2,7/1/2020,yes,Barking To The Streets (Series Presented By Bow Wow),51,12483[m
+[32m+[m[32mflybeats09,Gorilla Zoe,sponsored,no,"New project from Gorilla Zoe ""Don't Feed Da Animals 3"" available now!",yes,2031,,26385,48,3,6/30/2020,yes,Don't Feed Da Animals 3,10,43314[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,292,,2938,11,3,6/29/2020,yes,Game Over Vol 2 (series Presented By The Game),50,11165[m
+[32m+[m[32mDablock365,Various Artists,exclusive,no,if you need marketing and blogs or a official website hit up @520promotions on Instagram,yes,437,,5741,20,4,6/29/2020,yes,Game Over (series Presented By The Game),49,21035[m
+[32m+[m[32mflybeats09,Rizzoo Rizzoo,exclusive,no,"New mixtape from Rizzoo Rizzoo ""Bigger Than The Nawf"" available now on DatPiff!",yes,564,,6735,42,4,6/27/2020,yes,Bigger Than The Nawf,11,23334[m
+[32m+[m[32mDJYoungShawn,Kvng Zeakyy,exclusive,yes,Follow @kvng_Zeakky & DJ_YoungShawn,no,,DJ Young Shawn,1017,17,4,6/28/2020,yes,Madluv,13,4211[m
+[32m+[m[32mflybeats09,Max B,none,yes,"New EP from Max B ""Charly"" available now on DatPiff!",no,,,62698,238,4,6/26/2020,yes,Charly,5,79476[m
+[32m+[m[32mflybeats09,ALPO,exclusive,no,,yes,88,,1469,21,1,6/26/2020,yes,Keep Living,15,6107[m
+[32m+[m[32mflybeats09,Robb Bank$,exclusive,no,"New mixtape from Robb Bank$ ""Calendars"" available now on DatPiff!",yes,415,,3867,26,4,6/26/2020,yes,Calendars,14,12055[m
+[32m+[m[32mflybeats09,IDK,none,yes,,no,,,7155,40,4,6/26/2020,yes,IDK & Friends 2,9,16796[m
+[32m+[m[32mflybeats09,88GLAM,none,no,"New project from 88GLAM ""New Mania"" available now!",no,,,7953,37,4,6/26/2020,yes,New Mania,18,16327[m
+[32m+[m[32mflybeats09,Rah Swish,sponsored,no,"New mixtape from Rah Swish ""Woo Forever"" available now on DatPiff!",yes,712,,9821,45,4,6/26/2020,yes,Woo Forever,11,16916[m
+[32m+[m[32mflybeats09,Mr. Cheeks,none,no,"New project from the OG Mr. Cheeks ""Lights Camera Action 2"" available now!",no,,,10419,49,4,6/26/2020,yes,Lights Camera Action 2,12,21601[m
+[32m+[m[32mflybeats09,Riff Raff,none,yes,"New mixtape from Riff Raff ""Vanilla Gorilla"" available now on DatPiff!",no,,,16434,75,3,6/26/2020,yes,Vanilla Gorilla,9,28691[m
+[32m+[m[32mflybeats09,Yungeen Ace,none,yes,"New mixtape from Yungeen Ace ""Don Dada"" available now on DatPiff!",no,,,35685,128,3,6/26/2020,yes,Don Dada,14,53762[m
+[32m+[m[32mflybeats09,6LACK,none,yes,,no,,,37411,128,4,6/26/2020,yes,6PC Hot,6,53773[m
+[32m+[m[32mflybeats09,Nino Man,exclusive,no,"New mixtape from Nino Man ""Hungry For Success 3"" available now on DatPiff!",yes,2561,,40726,84,4,6/26/2020,yes,Hungry For Success 3,14,56260[m
+[32m+[m[32mflybeats09,August Alsina,none,yes,,no,,,49992,185,4,6/26/2020,yes,The Product III: stateofEMERGEncy,27,63674[m
+[32m+[m[32mflybeats09,Fat Trel,none,no,"New mixtape from Fat Trel ""Big Homie"" available now on DatPiff!",no,,,52766,131,4,6/25/2020,yes,Big Homie,18,69518[m
+[32m+[m[32mflybeats09,Various Artists,exclusive,no,"New compilation mixtape from some hot independent artists ""No Justice No Peace"" #BlackLivesMatter available now presented by DatPiff!",yes,755,DJ Young Shawn & Hustle Hearted,9266,63,4,6/25/2020,yes,No Justice No Peace: Black Lives Matter,19,34609[m
+[32m+[m[32mflybeats09,Nasty C,exclusive,no,"New mixtape from Nasty C & DJ Whoo Kid ""ZULU"" available now on DatPiff!",yes,2526,DJ Whoo Kid,14016,61,4,6/24/2020,yes,ZULU,11,34117[m
+[32m+[m[32mflybeats09,ALPO,exclusive,no,"New project from ALPO ""Keep Living"" available now  on DatPiff!",yes,0,,5,0,0,6/25/2020,yes,Keep Living,0,2868[m
+[32m+[m[32mflybeats09,TOMG Rique,exclusive,no,"New project from TOMG Rique ""Tha 8ight"" available now on DatPiff!",yes,166,,1553,26,3,6/22/2020,yes,Tha 8ight,8,6725[m
+[32m+[m[32mflybeats09,MGM Mike Mike,exclusive,no,"New project from MGM Mike Mike ""Stupid Genius"" available now on DatPiff!",yes,77,,2627,24,3,6/22/2020,yes,Stupid Genius,13,11746[m
+[32m+[m[32mflybeats09,Young Ja,exclusive,no,"New project from Young.Ja ""Project 41"" available now!",yes,205,,1558,9,2,6/21/2020,yes,Project 41,11,7161[m
+[32m+[m[32mflybeats09,TSE Rizzle,exclusive,no,"New project from TSE Rizzle ""Charisma Don"" available now on DatPiff!",yes,289,,3827,26,2,6/21/2020,yes,Charisma Don,11,15377[m
+[32m+[m[32mfettywap,Fetty Wap,sponsored,no,"New project from Fetty Wap ""BIG ZOOVIE"" produced by CezBeats available now on DatPiff!",yes,2723,,37911,187,4,6/20/2020,yes,Big Zoovie,8,61228[m
+[32m+[m[32mflybeats09,Wale,none,yes,"New EP from Wale ""The Imperfect Storm"" available now!",no,,,26163,157,4,6/19/2020,yes,The Imperfect Storm,6,56313[m
+[32m+[m[32mflybeats09,Curren$y & Fuse,none,no,"New mixtape from Curren$y & Fuse ""Spring Clean"" available now on DatPiff!",yes,5732,,68437,253,5,6/19/2020,yes,Spring Clean,10,86228[m
+[32m+[m[32mflybeats09,Tee Grizzley,none,no,"New mixtape from Tee Grizzley ""The Smartest"" available now on DatPiff!",no,,,89698,293,4,6/19/2020,yes,The Smartest,17,104438[m
+[32m+[m[32mBanditNJ,"Chad Piff, Mikee Mula",exclusive,yes,The well received and highly anticipated Robot series from eclectic artist Chad Piff returns with the Robot Chad 3 Album. Available on all platforms,no,,,200,4,4,6/19/2020,yes,Robot Chad iii,8,2250[m
+[32m+[m[32mflybeats09,Slayter,none,no,"New project from Slayter ""World Got Me Fucked Up Vol. 1"" presented by Cinematic available now on DatPiff!",no,,Cinematic,1948,19,4,6/19/2020,yes,World Got Me Fucked Up Vol. 1,12,5965[m
+[32m+[m[32mflybeats09,Gleesh,sponsored,no,"New EP from Gleesh ""Sick"" available now on DatPiff!",yes,69,,1990,16,3,6/19/2020,yes,Sick,3,7293[m
+[32m+[m[32mflybeats09,Goonew,none,yes,"New project from Goonew ""Big64 2"" available now on DatPiff!",no,,,2816,32,3,6/19/2020,yes,Big64 2,10,9950[m
+[32m+[m[32mflybeats09,Ron Suno,none,yes,"New mixtape from Ron Suno ""Swag Like Mike"" available now on DatPiff YouTube!",no,,,3005,28,3,6/19/2020,yes,Swag Like Mike,9,6908[m
+[32m+[m[32mflybeats09,Luh Soldier,none,no,"New mixtape from Luh Soldier ""Thug Luv"" available now on DatPiff!",no,,,7552,51,4,6/19/2020,yes,Thug Luv,9,17987[m
+[32m+[m[32mflybeats09,Joe Moses,none,no,"New mixtape from Joe Moses ""Westside II"" available now on DatPiff!",no,,,9853,52,4,6/19/2020,yes,Westside II,10,29517[m
+[32m+[m[32mflybeats09,Smokepurpp,none,no,,no,,,14194,98,3,6/19/2020,yes,Florida Jit,17,30443[m
+[32m+[m[32mkdough,Juliano,sponsored,no,,yes,106,,2295,16,3,6/18/2020,yes,Dope Spot 5 (Trap Closed),12,13913[m
+[32m+[m[32mFamousDex,Famous Dex,sponsored,no,"New EP from Famous Dex ""Where's Dexter"" available now on DatPiff!",yes,1303,,16702,124,3,6/14/2020,yes,Where's Dexter,8,36864[m
+[32m+[m[32mflybeats09,Fresho Franklin,exclusive,no,"New project from Fresho Franklin ""Federal Nightmares"" Hosted By DJ Self available now on DatPiff!",yes,152,DJ Self,2828,14,4,6/14/2020,yes,Federal Nightmares,12,8322[m
+[32m+[m[32mflybeats09,Dizzy Wright & Demrick,none,yes,"New mixtape from Dizzy Wright & Demrick ""Blaze With Us 2"" available now on DatPiff!",no,,,15149,103,4,6/12/2020,yes,Blaze With Us 2,15,30600[m
+[32m+[m[32mflybeats09,Sy Ari Da Kid,none,no,"New project from Sy Ari Da Kid ""A Toxic Heartbreak"" available now on DatPiff!",no,,,17689,68,4,6/12/2020,yes,A Toxic Heartbreak,15,39991[m
+[32m+[m[32mflybeats09,BenzoFresh,exclusive,no,"New mixtape from BenzoFresh ""Neighborhood Dopeman"" available now on DatPiff!",yes,220,,2106,13,2,6/12/2020,yes,Neighborhood Dopeman,10,6904[m
+[32m+[m[32mflybeats09,KEY!,none,yes,"New mixtape from KEY! ""I Love You Say It Back"" available now on DatPiff!",no,,,5410,32,4,6/12/2020,yes,I Love You Say It Back,10,18086[m
+[32m+[m[32mflybeats09,Iann Dior,none,yes,"New mixtape from Iann Dior ""I'm Gone"" available now on DatPiff!",no,,,5860,49,3,6/12/2020,yes,I'm Gone,9,32238[m
+[32m+[m[32mflybeats09,Fat Boy SSE,exclusive,no,"New mixtape from Fat Boy SSE ""New Jersey"" available now on DatPiff!",yes,391,,5894,91,2,6/12/2020,yes,New Jersey,16,16500[m
+[32m+[m[32mflybeats09,Teejay3k,sponsored,no,"New EP from Teejay3k ""Introvert: Side A"" available now on DatPiff!",yes,284,,4568,24,3,6/11/2020,yes,Introvert: Side A,4,9909[m
+[32m+[m[32mboosiebadazz,Boosie Badazz,none,yes,"Boosie Badazz & Jit The Beast team up for a new project ""In House"" featuring Dee Rogers, Bun B & more available now on DatPiff!",no,,Jit The Beast,72119,265,4,6/11/2020,yes,In House,17,90962[m
+[32m+[m[32mhustlehearted,DeeQuincy Gates,exclusive,no,"New project from FYB artist DeeQuincy Gates ""Jugg Masta Sensei""",no,,Hustle Hearted,1288,22,2,6/10/2020,yes,Jugg Masta Sensei,14,5328[m
+[32m+[m[32mLadieDutchess,DutchessQony,exclusive,no,"DutchessQony is back with her ""Hear, Here"" mixtape.",yes,48,,781,5,4,6/9/2020,yes,"""hear, Here""",11,4362[m
+[32m+[m[32mflybeats09,J Stone & Pacman Da Gunman,none,no,"New mixtape from J Stone & Pacman Da Gunman ""Ground Zero"" available now on DatPiff!",no,,,14507,120,5,6/9/2020,yes,Ground Zero,13,24347[m
+[32m+[m[32mflybeats09,Tsu Surf,none,no,"New mixtape from Tsu Surf ""MSYKM"" available now on DatPiff!",no,,,70039,271,5,6/9/2020,yes,MSYKM,13,80121[m
+[32m+[m[32mflybeats09,Lil Meta & Coca Vango,exclusive,no,"New mixtape from Lil Meta & Coca Vango ""Meta Vango"" available now on DatPiff!",yes,348,,5620,53,4,6/8/2020,yes,Meta Vango,10,15115[m
+[32m+[m[32mflybeats09,Flatbush Zombies,none,no,"New EP from Flatbush Zombies ""now, more than ever"" available now on DatPiff!",no,,,13533,128,4,6/5/2020,yes,"now, more than ever",6,31203[m
+[32m+[m[32mpaulwall,Paul Wall & Lil' Keke,none,yes,"New project from Paul Wall & Lil' Keke ""Slab Talk"" available now!",no,,,31685,178,4,6/5/2020,yes,Slab Talk,10,54661[m
+[32m+[m[32mflybeats09,JayDaYoungan,none,yes,"New mixtape from JayDaYoungan ""Baby23"" available now on DatPiff!",no,,,37261,170,3,6/5/2020,yes,Baby23,22,55700[m
+[32m+[m[32mhustlehearted,NBA Big B,none,yes,,no,,Never Broke Again,9275,53,4,6/5/2020,yes,Thoughts Of A Demon,12,30499[m
+[32m+[m[32mflybeats09,Run The Jewels,none,yes,,no,,,17063,173,4,6/3/2020,yes,RTJ4,11,39921[m
+[32m+[m[32m23domp,Dominic Pagon,exclusive,no,2nd mixtape by independent artist Dominic Pagon from Kingston Jamaica.,no,,,215226,100,5,6/1/2020,yes,Kingston,15,222365[m
+[32m+[m[32mflybeats09,Ace Hood,none,no,"New mixtape from Ace Hood ""Mr. Hood"" available now on DatPiff!",no,,,90040,567,4,5/29/2020,yes,Mr. Hood,14,126379[m
+[32m+[m[32mflybeats09,Curtis Williams,none,no,"New mixtape from Curtis Williams ""Last Action Hero"" available now on DatPiff!",no,,,2930,32,3,5/29/2020,yes,Last Action Hero,14,9971[m
+[32m+[m[32mflybeats09,Lil Poppa,none,no,"New mixtape from Lil Poppa ""Evergreen Wildchild 2"" available now on DatPiff!",no,,,3957,9,4,5/29/2020,yes,Evergreen Wildchild 2,12,5171[m
+[32m+[m[32mflybeats09,Problem,sponsored,no,"New mixtape from Problem ""Coffee & Kush Vol. 1"" available now on DatPiff!",yes,3355,,20598,123,4,5/29/2020,yes,Coffee & Kush Vol. 1,10,38676[m
+[32m+[m[32mflybeats09,Ola Runt,none,no,"New mixtape from Ola Runt ""Beggin For A Body"" available now on DatPiff!",no,,,20844,139,3,5/29/2020,yes,Beggin For A Body,16,62251[m
+[32m+[m[32mflybeats09,Southside & ChaseTheMoney,none,no,New self titled EP from the 2 super producers Southside & ChaseTheMoney available now on DatPiff!,no,,,24066,160,3,5/29/2020,yes,Southside & ChaseTheMoney,6,59366[m
+[32m+[m[32mflybeats09,Joell Ortiz & KXNG Crooked,none,yes,"New mixtape from Joell Ortiz & KXNG Crooked ""H.A.R.D."" available now on DatPiff!",no,,,27790,222,5,5/29/2020,yes,H.A.R.D.,8,51598[m
+[32m+[m[32mflybeats09,DeJ Loaf,none,no,"New EP from DeJ Loaf ""No Saint"" available now on DatPiff!",no,,,29198,234,4,5/29/2020,yes,No Saint,4,66098[m
+[32m+[m[32mflybeats09,Freddie Gibbs & The Alchemist,none,yes,"New mixtape from Freddie Gibbs & The Alchemist ""Alfredo"" available now on DatPiff!",no,,,71570,482,5,5/29/2020,yes,Alfredo,10,99742[m
+[32m+[m[32mflybeats09,Gerald Walker,exclusive,no,"New mixtape from Gerald Walker ""The World Will Spin Without You"" available now on DatPiff!",yes,658,,4749,65,3,5/28/2020,yes,The World Will Spin Without You,6,15372[m
+[32m+[m[32mflybeats09,MPR Tito,sponsored,no,"New mixtape from MPR Tito ""Tito Way"" available now on DatPiff!",yes,605,,4955,30,4,5/28/2020,yes,Tito Way,12,11053[m
+[32m+[m[32mflybeats09,Slimelife Shawty,none,yes,"New mixtape from Slimelife Shawty ""No Slime Left Behind"" available now on DatPiff!",no,,,7416,49,4,5/28/2020,yes,No Slime Left Behind,13,15070[m
+[32m+[m[32mflybeats09,YungManny,none,no,"New project from YungManny ""Confused"" available now on DatPiff!",no,,,3139,37,3,5/27/2020,yes,Confused,11,8845[m
+[32m+[m[32mflybeats09,La Gualla,exclusive,no,"New mixtape La Gualla ""Humble Beast"" availbale now on DatPiff!",yes,1335,,12020,133,3,5/25/2020,yes,Humble Beast,13,35989[m
+[32m+[m[32mGorillaZOE,Gorilla Zoe,none,yes,"New project from Atlanta OG Gorilla Zoe ""Vaccine"" available now!",no,,,21927,141,4,5/25/2020,yes,Vaccine,10,42558[m
+[32m+[m[32mflybeats09,OTB Fastlane,none,yes,"New project from OTB Fastlane ""90 Day Dogg"" available now on DatPiff!",no,,,2227,15,4,5/25/2020,yes,90 Day Dogg,9,5489[m
+[32m+[m[32mflybeats09,Young L,exclusive,no,"Part 2 of Young L's ""Praktica"" mixtape series available now exclusively on DatPiff!",yes,344,,2356,25,3,5/25/2020,yes,Praktica Vol. 2,5,8617[m
+[32m+[m[32mflybeats09,Young Buck,sponsored,no,"New project from Young Buck ""Outbreak"" available now on DatPiff!",yes,10918,,83925,526,4,5/24/2020,yes,Outbreak,7,118420[m
+[32m+[m[32mAloxNJ,Trapperman Dale,sponsored,no,"New mixtape from Trapperman Dale ""Flight Risk"" available now on DatPiff!",yes,2407,,17127,131,4,5/23/2020,yes,Flight Risk,11,31265[m
+[32m+[m[32mflybeats09,Key Glock,none,yes,,no,,,94567,389,4,5/22/2020,yes,Son Of A Gun,15,113383[m
+[32m+[m[32mflybeats09,Styles P,none,yes,"New mixtape from Styles P ""Styles David: Ghost Your Enthusiasm"" available now on DatPiff!",no,,,136784,854,5,5/22/2020,yes,Styles David: Ghost Your Enthusiasm,15,166282[m
+[32m+[m[32mAloxNJ,Conan,exclusive,no,,yes,230,,1456,8,3,5/22/2020,yes,Ming Alau,13,6454[m
+[32m+[m[32mflybeats09,Taylor J,exclusive,no,"New mixtape from Taylor J ""Gametime"" available now on DatPiff!",yes,477,,2276,37,4,5/22/2020,yes,Gametime,15,9840[m
+[32m+[m[32mAloxNJ,Runway Richy,none,yes,"New mixtape from Runway Richy ""Perc 30"" available now on DatPiff!",no,,,3140,32,3,5/22/2020,yes,Perc 30,8,8831[m
+[32m+[m[32mflybeats09,TJ Porter,none,yes,"New mixtape from TJ Porter ""We Gon Ball"" available now on DatPiff!",no,,,4137,38,3,5/22/2020,yes,We Gon Ball,12,13792[m
+[32m+[m[32mhustlehearted,HotBoii,none,yes,,no,,,14290,42,4,5/22/2020,yes,Kut Da Fan On,17,19316[m
+[32m+[m[32mflybeats09,Boston George,none,no,"New mixtape from Boston George ""Baking Soda Boston 2"" available now on DatPiff!",no,,,21414,131,5,5/22/2020,yes,Baking Soda Boston 2,12,29737[m
+[32m+[m[32mflybeats09,Bino Rideaux,none,yes,"New mixtape from Bino Rideaux ""OUTSIDE"" available now on DatPiff!",no,,,21664,137,4,5/22/2020,yes,OUTSIDE,15,33652[m
+[32m+[m[32mdejloaf,Dej Loaf,none,yes,"New 4 song EP from Dej Loaf ""It's A Setup"" available now!",no,,,26128,213,4,5/22/2020,yes,Its A Setup!,4,57115[m
+[32m+[m[32mAloxNJ,Fendi P,exclusive,no,"New mixtape from Fendi P ""8 pm"" available now on DatPiff!",yes,3850,,29398,220,4,5/22/2020,yes,8PM,8,51083[m
+[32m+[m[32mflybeats09,Hoodrich Pablo Juan,none,yes,"New mixtape from Hoodrich Pablo Juan ""Hood Champ"" available now on DatPiff!",no,,,46239,219,4,5/22/2020,yes,Hood Champ,12,72806[m
+[32m+[m[32mflybeats09,Young M.A,none,yes,"New mixtape from Young M.A ""Red Flu"" available now on DatPiff!",no,,,72338,484,4,5/22/2020,yes,Red Flu,7,103252[m
+[32m+[m[32mflybeats09,Bloody Jay,sponsored,no,"New EP from Bloody Jay ""No Comparison"" available now on DatPiff!",yes,685,,5131,55,3,5/19/2020,yes,No Comparison,3,14421[m
+[32m+[m[32mflybeats09,Various Artists,exclusive,no,"Cutmaster C presents ""Unsigned Artist Draft"" (Pandemic Edition) highlighting some new up and coming talent available now exclusively on DatPiff!",yes,960,Cutmaster C,9943,33,3,5/16/2020,yes,Unsigned Artist Draft (Pandemic Edition),19,22291[m
+[32m+[m[32mflybeats09,Troy Ave,none,yes,"New mixtape from Troy Ave ""Troy Ave Vol 1"" available now on DatPiff!",no,,,36150,237,4,5/15/2020,yes,Troy Ave Vol 1,13,68017[m
+[32m+[m[32mAloxNJ,Slime Krime,exclusive,no,"New mixtape from Slime Krime ""Young Rich & Destined 2"" available now on DatPiff!",yes,536,,3609,26,4,5/15/2020,yes,Young Rich & Destined 2,9,10326[m
+[32m+[m[32mflybeats09,Tokyo Jetz,sponsored,no,"New EP from Tokyo Jetz ""Stimulus Package"" available now on DatPiff!",yes,740,,4162,57,3,5/15/2020,yes,Stimulus Package,5,11957[m
+[32m+[m[32mflybeats09,Seddy Hendrinx,none,no,"New project from Seddy Hendrinx ""Black Hearted Demon"" featuring OMB Peezy available now on DatPiff!",yes,537,Generation NOW,5066,50,4,5/15/2020,yes,Black Hearted Demon,6,11471[m
+[32m+[m[32mAloxNJ,Ant200,exclusive,no,"New mixtape from Ant200 ""Life Of A 200Baby 3"" available now on DatPiff!",yes,916,,5879,62,4,5/15/2020,yes,Life Of A 200baby 3,16,16008[m
+[32m+[m[32mflybeats09,Renni Rucci,sponsored,no,"New mixtape from Renni Rucci ""QuickTape"" available now on DatPiff!",yes,1161,,6064,90,4,5/15/2020,yes,QuickTape,8,15790[m
+[32m+[m[32mflybeats09,Mak Sauce,exclusive,yes,"New mixtape from Mak Sauce ""What Is World 2"" available now on DatPiff!",no,,,7644,110,3,5/15/2020,yes,What Is World 2,12,21669[m
+[32m+[m[32mflybeats09,Foolio,none,yes,"New project from Foolio ""Top Conniver"" available now on DatPiff!",no,,,11172,73,4,5/15/2020,yes,Top Conniver,8,26158[m
+[32m+[m[32mflybeats09,OMB Peezy,sponsored,yes,"New EP from OMB Peezy ""In The Meantime"" available now on DatPiff!",no,,,19844,117,4,5/15/2020,yes,In The Meantime,7,47872[m
+[32m+[m[32mAloxNJ,Chief Keef,none,no,"New EP from Chief Keef ""Extra GLO"" avaialble now on DatPiff!",no,,,28006,230,4,5/15/2020,yes,Extra GLO,5,54172[m
+[32m+[m[32mAloxNJ,Sheff G,none,yes,"New mixtape from Sheff G ""One and Only"" available now on DatPiff!",no,,,36071,121,5,5/15/2020,yes,One And Only,12,39473[m
+[32m+[m[32mhustlehearted,YFN Fat,none,no,,no,,YFNBC,5270,41,4,5/14/2020,yes,Loyalty Lasts 4eva,5,12289[m
+[32m+[m[32mAloxNJ,Selfmade Steph,exclusive,no,"New mixtape from Selfmade Steph ""Talking My Shit"" availbale now on DatPiff!",yes,53,,420,7,4,5/14/2020,yes,Talking My Shit,14,2920[m
+[32m+[m[32mflybeats09,Allan Kingdom,none,no,"New EP from Allan Kingdom ""I Don't Do This For Money"" available now!",no,,,1580,42,2,5/14/2020,yes,I Don't Do This For Money,4,7145[m
+[32m+[m[32mflybeats09,JDot,exclusive,no,"New mixtape from JDot ""Misery Into Millions Vol 1"" available now on DatPiff!",yes,554,,4129,37,4,5/12/2020,yes,Misery Into Millions,7,17381[m
+[32m+[m[32mhustlehearted,Beezy K,sponsored,no,,yes,400,,2978,30,4,5/11/2020,yes,Wic Baby,12,12226[m
+[32m+[m[32mflybeats09,Larry June & Cardo,none,yes,"New project from Larry June & Cardo ""Cruise USA"" available now on DatPiff!",no,,,41004,214,5,5/9/2020,yes,Cruise USA,8,47942[m
+[32m+[m[32mflybeats09,Philthy Rich,none,yes,"New mixtape from Philthy Rich ''The Remixes #4"" available now on DatPiff!",no,,,11930,69,4,5/9/2020,yes,The Remixes #4,10,25021[m
+[32m+[m[32mflybeats09,Lil Durk,none,yes,"New mixtape from Lil Durk ""Just Cause Y'all Waited 2"" available now on DatPiff!",no,,,242150,896,4,5/8/2020,yes,Just Cause Y'all Waited 2,15,272165[m
+[32m+[m[32mflybeats09,Bway Yungy,sponsored,no,"New mixtape from Bway Yungy ""6 Wayz To It"" available now on DatPiff!",yes,590,,2966,28,4,5/8/2020,yes,6 Wayz To It,8,8255[m
+[32m+[m[32mflybeats09,Big Yavo,sponsored,no,"New mixtape from Big Yavo ""On God"" available now on DatPiff!",yes,586,,4024,32,4,5/8/2020,yes,On God,11,9368[m
+[32m+[m[32mflybeats09,Young Lito,sponsored,no,"New project from Young Lito ""Stay Inside (The Quarantine Tape)"" available now!",yes,929,,6423,62,3,5/8/2020,yes,Stay Inside (The Quarantine Tape),9,15784[m
+[32m+[m[32mflybeats09,JGreen,sponsored,no,"New mixtape from JGreen ""510"" available now on DatPiff!",yes,1085,,6634,49,4,5/8/2020,yes,510,21,15016[m
+[32m+[m[32mflybeats09,Cash Kidd,none,no,"New project from Cash Kidd ""No Socks"" available now!",no,,,8372,62,4,5/8/2020,yes,No Socks,15,13760[m
+[32m+[m[32mflybeats09,Project Youngin,none,yes,"New mixtape from Project Youngin ""Resurrected"" available now on DatPiff!",no,,,10822,88,3,5/8/2020,yes,Resurrected,13,28072[m
+[32m+[m[32mflybeats09,E-40,none,yes,"New EP from E-40 ""The Curb Commentator Channel 1"" available now on DatPiff!",no,,,21954,236,5,5/8/2020,yes,The Curb Commentator Channel 1,5,39800[m
+[32m+[m[32mflybeats09,Yella Beezy & Trapboy Freddy,none,yes,"New mixtape from Yella Beezy & Trapboy Freddy """"I'm My Brother's Keeper"" available now on DatPiff!",no,,,54613,316,4,5/8/2020,yes,I'm My Brother's Keeper,13,80614[m
+[32m+[m[32mflybeats09,Lil Tjay,none,yes,,no,,,57877,344,3,5/8/2020,yes,State Of Emergency,7,97612[m
+[32m+[m[32mBobbyJRockaway,Bobby J From Rockaway,exclusive,no,"Entirely produced, mixed and mastered by Roc Nation/Mass Appeal producer Statik Selektah.  With features from Haile Supreme and Lil Dee, and 2 bonus tracks produced by Nef.",yes,251,Statik Selektah,2125,28,3,5/5/2020,yes,Endless Summer,7,12627[m
+[32m+[m[32mAloxNJ,Lil Mexico,sponsored,no,"New mixtape from Lil Mexico ""Against All Odds"" available now on DatPiff!",yes,1064,,6963,60,3,5/5/2020,yes,Against All Odds,14,18500[m
+[32m+[m[32mhustlehearted,Johnny Cinco,none,yes,,no,,Sak Religious,26596,150,4,5/5/2020,yes,John Popi 3,12,43336[m
+[32m+[m[32mflybeats09,Young L,exclusive,no,"New 3 song EP from Young L ""Joog Talk"" available now on DatPiff!",yes,281,,1744,23,2,5/5/2020,yes,Joog Talk (EP),3,11330[m
+[32m+[m[32mAloxNJ,Tate Kobang,sponsored,no,"New EP from Tate Kobang ""Wrote On My Body"" available now on DatPiff!",yes,451,,3206,36,3,5/4/2020,yes,Wrote On My Body,7,10757[m
+[32m+[m[32mAloxNJ,DSR Splurge,exclusive,no,New self-titled EP from DSR Splurge available now on DatPiff!,yes,493,,3786,39,3,5/4/2020,yes,DSR Splurge,6,12996[m
+[32m+[m[32mstreetkingpin,Cool Amerika,sponsored,no,Alliance Music Group Presents Cool Amerika - No taxes 3. Its Bally baby and Cartiye Stunt are back with a slew of bangers to takeover the airwaves for the summer of 2020. Make sure to follow the group @coolamerika everywhere.,yes,143,,691,13,2,5/2/2020,yes,No Taxes 3,10,3852[m
+[32m+[m[32mAloxNJ,Ace Hood,none,yes,"New EP from Ace Hood ""Self Preservation"" available now on DatPiff!",no,,,64044,549,4,5/1/2020,yes,Self Preservation,3,120273[m
+[32m+[m[32mAloxNJ,Journey Gz,exclusive,no,"New EP from Journey Gz ""#11"" available now on DatPiff!",no,,,4111,55,2,5/1/2020,yes,#11,4,20843[m
+[32m+[m[32mflybeats09,NWM Cee Murdaa,sponsored,no,"New mixtape from NWM Cee Murdaa ""Murdaa Cee Wrote"" available now on DatPiff!",yes,721,,4930,59,3,5/1/2020,yes,Murdaa Cee Wrote,16,12161[m
+[32m+[m[32mDJ AGE,Bad Lucc,exclusive,no,"Coming straight from Watts, California and from Diamond Lane Music Group, the home to artists like Problem we present Bad Lucc 'The Watts Riot 2' Official Mixtape.[m[41m  [m
+[32m+[m
+[32m+[m[32mThis is the second installment to The Watts Riot that was released in 2007 and an unknown weapon in the rap game as the genius writer/rapper who brought so many hits from Snoop Dogg & many more.[m
+[32m+[m
+[32m+[m[32mWWW.DJAGEPRODUCTIONS.COM[m
+[32m+[m[32mTWITTER @DJAGE & @GOODLUCK354[m
+[32m+[m[32mINSTAGRAM @DJAGE & @BADLUCC354",yes,1454,DJ AGE,6969,55,4,5/1/2020,yes,The Watts Riot 2,21,15903[m
+[32m+[m[32mhustlehearted,Guap Tarantino,sponsored,no,,yes,1293,FreeBandz,9472,64,4,5/1/2020,yes,Quarantino,8,18997[m
+[32m+[m[32mBillyBoyBrody,Billy Boy Brody,exclusive,no,"New project from Jaccpot Ent's Billy Boy Brody ""Soul Ties"" available now exclusively on DatPiff!",yes,1411,Jaccpot,12643,115,3,5/1/2020,yes,Soul Ties,10,33376[m
+[32m+[m[32mflybeats09,VL Deck,sponsored,no,"VL Deck is keeping busy with a new project ""Quarantine Vibes"" available now on DatPiff!",yes,527,,3356,27,4,4/30/2020,yes,Quarantine Vibes,8,8655[m
+[32m+[m[32mKPReilly02,Yung Bleu,none,no,"New 6 song EP from Yung Bleu ""Since We Inside"" available now!",yes,5705,,47988,257,4,4/30/2020,yes,Since We Inside,6,85423[m
+[32m+[m[32mAloxNJ,Reese LAFLARE,sponsored,no,"New EP from Reese LAFLARE ""Diva, Vol 1"" available now on DatPiff!",yes,323,,1822,34,3,4/29/2020,yes,"Diva, Vol 1",3,7569[m
+[32m+[m[32mAloxNJ,Ron Browz,exclusive,no,"New mixtape from Ron Browz ""The Christening 3"" avaialble now on DatPiff!",yes,2193,,16729,113,4,4/28/2020,yes,The Christening 3,11,32893[m
+[32m+[m[32mstreetkingpin,Waka Flocka,exclusive,yes,"Brick Squad Monopoly Presents Rapper, Recording Artist and Reality TV Star, Waka Flocka ""Salute Me Or Shoot Me 7"" hosted by Dj Big Tiny and Trap-A-Holics. Follow Waka Flocka on all social platforms.",no,,"Trap-A-Holics, Dj Big Tiny",78492,583,4,4/28/2020,yes,Salute Me Or Shoot Me 7,11,118748[m
+[32m+[m[32mflybeats09,Chance The Rapper,none,no,"8 new songs from Chance The Rapper via Instagram ""The Instagram EP"" available now on DatPiff!",no,,,35920,327,4,4/26/2020,yes,Instagram EP,8,70644[m
+[32m+[m[32mDJYoungShawn,D De Niro,sponsored,no,,yes,93,,560,13,2,4/26/2020,yes,Trap Over Ascap,10,3273[m
+[32m+[m[32mAloxNJ,XV,none,yes,"New EP from XV ""With Gods Among Us"" available now on DatPiff!",no,,,2540,30,4,4/26/2020,yes,With Gods Among Us,3,7199[m
+[32m+[m[32mtrouble,Trouble,none,yes,"New album from Trouble ""Thug Luv"" featuring City Girls, Boosie, 2 Chainz, Quavo & more available now on DatPiff!",no,,,68962,387,4,4/24/2020,yes,Thug Luv,18,98221[m
+[32m+[m[32mAloxNJ,K CAMP,none,yes,"New mixtape from K CAMP ""Kiss 5"" available now on DatPiff!",no,,,100126,416,5,4/24/2020,yes,Kiss 5,15,117552[m
+[32m+[m[32mkarlkani,LBS Kee'vin,none,no,"New mixtape from LBS Kee'vin ""Belair Baby"" available now on DatPiff!",yes,174,,1106,12,3,4/24/2020,yes,Belair Baby,11,4701[m
+[32m+[m[32mflybeats09,Guapdad 4000,none,yes,"New mixtape from Guapdad 4000 ""Platinum Falcon Tape Vol. 1"" available now on DatPiff!",no,,,3660,50,3,4/24/2020,yes,Platinum Falcon Tape Vol. 1,6,10696[m
+[32m+[m[32mflybeats09,VL Deck,none,yes,"New mixtape from VL Deck ""Lil Deck vs Vl Deck"" available now on DatPiff!",no,,,4015,50,4,4/24/2020,yes,Lil Deck Vs Vl Deck,10,10389[m
+[32m+[m[32mflybeats09,Jameel Na'im X,exclusive,no,"New project from Jameel Na'im X ""06 Weezy"" Presented by GoodSense available now on DatPiff!",yes,907,Good$ense,6449,81,4,4/24/2020,yes,06 Weezy,19,23122[m
+[32m+[m[32mkarlkani,Booka600,none,no,"New EP from Booka600 ""Homeless"" available now!",no,,OTF,6827,59,4,4/24/2020,yes,Homeless,6,15641[m
+[32m+[m[32mAloxNJ,Trill Sammy & Dice SoHo,sponsored,no,"New mixtape from Trill Sammy & Dice SoHo ""TrillSoHo"" avaialble now on DatPiff!",yes,1108,,7762,63,4,4/24/2020,yes,TrillSoHo,14,17300[m
+[32m+[m[32mkarlkani,Slim 400,none,no,"New project from Slim 400 ""Shake Back"" available now!",no,,,9986,96,4,4/24/2020,yes,Shake Back,12,20270[m
+[32m+[m[32mAloxNJ,Guy2x,exclusive,no,"New mixtape from Guy2x ""2nd Quarter"" available now on DatPiff!",yes,1584,,14705,157,4,4/24/2020,yes,2nd Quarter,15,43550[m
+[32m+[m[32mflybeats09,Lil Gotit,exclusive,no,"New mixtape from Lil Gotit ""Hood Baby 2"" available now on DatPiff!",no,,,36978,217,4,4/24/2020,yes,Hood Baby 2,18,59693[m
+[32m+[m[32mAloxNJ,Jackboy,none,yes,New self-titled mixtape from Jackboy available now on DatPiff!,no,,,80710,358,4,4/23/2020,yes,Jackboy,17,106363[m
+[32m+[m[32mflybeats09,Ray Vicks,exclusive,no,"New mixtape from Ray Vicks ""Code Red"" available now on DatPiff!",yes,1685,,11108,87,4,4/22/2020,yes,Code Red,13,23626[m
+[32m+[m[32mkarlkani,Smileyface,sponsored,no,"New project from Smileyface ""The Cure"" available now on DatPiff!",yes,152,,1030,79,1,4/21/2020,yes,The Cure,13,4135[m
+[32m+[m[32mkarlkani,"Clever, NoCap & Rylo Rodriguez",none,no,"PAYHOUSE Presents: New single from Clever, NoCap & Rylo Rodriguez ""Neighborhood Rock"" available now on DatPiff!",no,,PAYHOUSE,1326,17,3,4/21/2020,yes,Neighborhood Rock,1,9609[m
+[32m+[m[32mkarlkani,Audio Push,none,no,"New EP from Audio Push ""Exhale"" available now on DatPiff!",no,,,2332,27,4,4/22/2020,yes,Exhale,4,7403[m
+[32m+[m[32mwizkhalifa,Wiz Khalifa,none,yes,"New 4/20 project from Wiz Khalifa ""The Saga of Wiz Khalifa""",no,,Taylor Gang,129359,1006,4,4/20/2020,yes,The Saga Of Wiz Khalifa,7,218829[m
+[32m+[m[32mflybeats09,Abby Jasmine,sponsored,no,"New mixtape from Abby Jasmine ""Who Cares?"" available now on DatPiff!",yes,831,,4050,85,3,4/20/2020,yes,Who Cares?,9,9568[m
+[32m+[m[32mflybeats09,Young Breed,exclusive,no,"New mixtape from Young Breed ""#FC9"" available now on DatPiff!",yes,864,,4461,48,4,4/20/2020,yes,#FC9,11,13094[m
+[32m+[m[32mhustlehearted,Rizzoo Rizzoo,none,no,,no,,TSF,5553,59,4,4/20/2020,yes,Rizzoo Rollin Grams,7,12878[m
+[32m+[m[32mflybeats09,Lil Wop,sponsored,no,"New mixtape from Lil Wop ""Light"" available now on DatPiff!",yes,872,,6504,107,2,4/20/2020,yes,Light,9,17968[m
+[32m+[m[32msmokedza,Smok
