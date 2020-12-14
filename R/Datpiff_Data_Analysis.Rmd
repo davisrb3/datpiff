@@ -3,8 +3,8 @@ title: "Datpiff"
 author: "Rob Davis"
 date: "11/2/2020"
 output: 
-    html_notebook: default
     html_document: default
+    html_notebook: default
 ---
 
 ```{r setup, include=FALSE}
@@ -169,15 +169,18 @@ monthly <- data %>%
             avg_listens = mean(listens), med_listens = median(listens), 
             avg_downloads = mean(downloads, na.rm = T), med_downloads = median(downloads, na.rm = T),
             avg_lpv = mean(listens_per_view), med_lpv = median(listens_per_view),
-            avg_dpv = mean(downloads_per_view, na.rm = T), med_dpv = median(downloads_per_view, na.rm = T))
+            avg_dpv = mean(downloads_per_view, na.rm = T), med_dpv = median(downloads_per_view, na.rm = T),
+            total_views = sum(views), total_listens = sum(listens), total_downloads = sum(downloads, na.rm = T))
 ```
 
 ```{r}
 monthly_stats <- monthly %>% 
   pivot_longer(.,
-               count:med_dpv,
+               count:total_downloads,
                names_to = "stat",
                values_to = "value")
+
+monthly_stats
 ```
 
 #### Plotting Setup
@@ -189,7 +192,9 @@ freq_stats = c("count")
 lpv_stats = c("avg_lpv", "med_lpv")
 dpv_stats = c("avg_dpv", "med_dpv")
 listens_downloads = c("avg_views", "avg_listens", "avg_downloads")
+med_l_dl = c("med_views", "med_listens", "med_downloads")
 lpv_dpv = c("avg_lpv", "avg_dpv")
+totals = c("total_views", "total_listens", "total_downloads")
 
 stat_plot <- function(x){
   monthly_stats %>% 
@@ -203,14 +208,80 @@ stat_plot <- function(x){
 ### Mixtape upload frequency over time
 ```{r}
 stat_plot(freq_stats) +
-  ggtitle("Mixtape Uploads per Month") +
+  ggtitle("Mixtape Uploads per Month (2010-2020)") +
   ylab("Mixtapes Uploaded") + 
   xlab("Month") +
   theme_minimal() + 
   theme(legend.position = "none") +
   scale_x_date(date_labels = "%b-%y", date_breaks = "year", limits = c(ymd("2010-01-01"),NA)) + 
-  scale_y_continuous(breaks = seq(0,150,25))
+  scale_y_continuous(breaks = seq(0,140,20), limits = c(0,140))
 
+```
+
+### Upload Frequency of sponsored / exclusive mixtapes
+```{r}
+paid_monthly <- data %>% 
+  mutate(., sponsored = ifelse(banner == "none", "unsponsored", "sponsored")) %>% 
+  group_by(., release_month, sponsored) %>% 
+  summarise(., count = n(), 
+            avg_views = mean(views), med_views = median(views),
+            avg_listens = mean(listens), med_listens = median(listens), 
+            avg_downloads = mean(downloads, na.rm = T), med_downloads = median(downloads, na.rm = T),
+            avg_lpv = mean(listens_per_view), med_lpv = median(listens_per_view),
+            avg_dpv = mean(downloads_per_view, na.rm = T), med_dpv = median(downloads_per_view, na.rm = T),
+            total_views = sum(views), total_listens = sum(listens), total_downloads = sum(downloads, na.rm = T)) %>% 
+  pivot_longer(.,
+               count:total_downloads,
+               names_to = "stat",
+               values_to = "value") 
+  #%>%
+  #mutate(., banner = factor(banner, levels = c("none", "exclusive", "sponsored")))
+  #%>% 
+  # select(., !banner)
+
+paid_monthly
+
+paid_uploads_plot <- function(stats, title = NULL){
+  paid_monthly %>% 
+    filter(stat %in% stats, between(release_month, ymd("2009-06-30"), ymd("2020-12-31"))) %>% 
+    ggplot(., aes(x = release_month, y = value, fill = sponsored, color = sponsored)) +
+    geom_line() + 
+    ggtitle(title) +
+    theme_minimal() +
+    theme(legend.position = c(.85,.85)) +
+    xlab("Month") +
+    ylab("Mixtapes Uploaded") + 
+    scale_x_date(date_labels = "%b-%y", date_breaks = "year", limits = c(ymd("2010-01-01"),NA)) + 
+    #scale_x_date(date_breaks = "2 years", date_labels = "%b-%y") +
+    scale_y_continuous(breaks = seq(0,140,20), limits = c(0,140)) +
+    scale_color_discrete(name = "Sponsorship Status", labels = c("Sponsored", "Unsponsored"))
+  }
+
+paid_uploads_plot(c("count"), title = "Mixtape Sponsorship per Month (2010-2020)")
+
+```
+
+## Total Engagement by Release Date
+```{r}
+stat_plot(totals) + 
+  ggtitle("User Engagement by Release Month (2010-2020)") + 
+  xlab("Release Month") +
+  ylab("Monthly Total") + 
+  theme_minimal() + 
+  theme(legend.position = c(.85,.85)) +
+  scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +
+  scale_y_continuous(labels = comma, breaks = seq(0, 6E7, 1E7)) +
+  scale_color_discrete(name = NULL, 
+                       breaks = c("total_views", "total_listens", "total_downloads"), 
+                       labels = c("Views", "Listens", "Downloads"))
+```
+
+#### Quick peek at that peak month
+```{r}
+data %>% 
+  filter(release_month == ymd("2015-11-01")) %>% 
+  arrange(., desc(views)) %>% 
+  select(., artist, title, views, listens, downloads)
 ```
 
 ## Average and median mixtape views over time
@@ -220,6 +291,7 @@ stat_plot(view_stats) +
   xlab("Month") +
   ylab("Views") + 
   theme_minimal() + 
+  theme(legend.position = c(.85,.85)) +
   scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"),NA)) +
   scale_y_continuous(limits = c(0, 1250000), breaks = seq(0,1250000, 250000), label = comma) + 
   scale_color_discrete(name = NULL, labels = c("Monthly Average", "Monthly Median"))
@@ -267,7 +339,7 @@ stat_plot(lpv_stats) +
 stat_plot(dpv_stats) + 
   ggtitle("Download per View Rate by Release Month") + 
   xlab("Release Month") +
-  ylab("Downloads per View") + 
+  ylab("Monthly Average") + 
   theme_minimal() + 
   scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +
   scale_y_continuous(limits = c(0, 0.25)) + 
@@ -277,23 +349,46 @@ stat_plot(dpv_stats) +
 ### Monthly Stats
 ```{r}
 stat_plot(listens_downloads) +
-  scale_x_date(limits = c(ymd("2010-01-01", NA))) + 
-  scale_y_continuous(limits = c(0, 1250000))
+  scale_x_date(limits = c(ymd("2013-06-30", NA)), date_breaks = "2 years", date_labels = "%b-%Y") + 
+  scale_y_continuous(limits = c(0, 1250000), labels = comma, breaks = seq(0,1200000,200000)) + 
+  ggtitle("Average Mixtape by Release Month") + 
+  xlab("Release Month") +
+  ylab("Monthly Average") + 
+  theme_minimal()+
+  theme(legend.position = c(.85,.85)) +
+  scale_color_discrete(name = NULL, breaks = c("avg_views", "avg_listens", "avg_downloads"),
+                       labels = c("Views", "Listens", "Downloads"))
+
+```
+
+# Median
+```{r}
+stat_plot(med_l_dl) +
+  scale_x_date(limits = c(ymd("2009-06-30", NA)), date_breaks = "2 years", date_labels = "%b-%Y") + 
+  scale_y_continuous(limits = c(0, 300000), labels = comma, breaks = seq(0, 3E5, 5E4)) + 
+  ggtitle("Median Mixtape by Release Month") + 
+  xlab("Release Month") +
+  ylab("Monthly Median") + 
+  theme_minimal() +
+  scale_color_discrete(name = NULL, breaks = c("med_views", "med_listens", "med_downloads"), 
+                       labels = c("Views", "Listens", "Downloads"))
 
 ```
 
 ## 'Per view' Rates together
 ```{r}
-stat_plot(lpv_dpv) + 
-  geom_smooth(aes(color = stat), se=T, alpha = 0.2, size = 0.4) +
-  ggtitle("Listen and Download Rates") + 
+per_view <- stat_plot(lpv_dpv) + 
+  #geom_smooth(aes(color = stat), se=T, alpha = 0.2, size = 0.4) +
+  ggtitle("Rates of Engagement per View") + 
   xlab("Release Month") +
-  ylab("Downloads per View") + 
+  ylab("Rate") + 
   theme_minimal() + 
+  theme(legend.position = c(.8,.9)) +
   scale_x_date(date_labels = "%b-%y", date_breaks = "2 years", limits = c(ymd("2009-06-30"), NA)) +
-  scale_y_continuous(limits = c(0, 0.55), breaks = seq(0, 0.50, 0.1)) + 
-  scale_color_discrete(name = NULL, labels = c("Listens per View", "Downloads per View"))
+  scale_y_continuous(limits = c(0, 0.6), breaks = seq(0, 0.60, 0.05)) +
+  scale_color_discrete(name = NULL, breaks = c("avg_lpv", "avg_dpv"), labels = c("Listen Rate", "Download Rate"))
 
+per_view
 ```
 
 ## Median Listens by Download Enabled status
@@ -391,24 +486,22 @@ options_enabled <- data %>%
   mutate(., download_enabled_rate = download_enabled / count, buy_enabled_rate = buy_enabled / count) %>%
   pivot_longer(., count:buy_enabled_rate)
 
-options_enabled_ptile <- data_ptile %>% 
-  group_by(., release_year, ptile) %>% 
-  summarise(., count = n(), download_enabled = sum(download_enabled), buy_enabled = sum(buy_enabled)) %>% 
-  mutate(., download_enabled_rate = download_enabled / count, buy_enabled_rate = buy_enabled / count) %>%
-  pivot_longer(., count:buy_enabled_rate)
-
-options_enabled_ptile
+# options_enabled_ptile <- data_ptile %>% 
+#   group_by(., release_year, ptile) %>% 
+#   summarise(., count = n(), download_enabled = sum(download_enabled), buy_enabled = sum(buy_enabled)) %>% 
+#   mutate(., download_enabled_rate = download_enabled / count, buy_enabled_rate = buy_enabled / count) %>%
+#   pivot_longer(., count:buy_enabled_rate)
 ```
 
 ```{r}
-options_enabled_ptile%>% 
-  filter(name == "download_enabled_rate", ptile %in% c(1,5,10,15,20)) %>% 
-  ggplot(., aes(x = release_year, y = value)) +
-  geom_line(aes(color = as.factor(ptile))) + 
-  ggtitle("Mixtapes with Purchase and Download Options (2015 - 2020)") +
-  theme_minimal() + 
-  xlim(2015,2020) +
-  ylab("Mixtapes")
+# options_enabled_ptile%>% 
+#   filter(name == "download_enabled_rate", ptile %in% c(1,5,10,15,20)) %>% 
+#   ggplot(., aes(x = release_year, y = value)) +
+#   geom_line(aes(color = as.factor(ptile))) + 
+#   ggtitle("Mixtapes with Purchase and Download Options (2015 - 2020)") +
+#   theme_minimal() + 
+#   xlim(2015,2020) +
+#   ylab("Mixtapes")
 
 ```
 
@@ -417,7 +510,7 @@ options_enabled_ptile%>%
 options_enabled %>% 
   filter(name %in% c("download_enabled", "buy_enabled")) %>% 
   ggplot(., aes(x = release_month, y = value)) +
-  geom_line(aes(color = name)) + 
+  geom_line(aes(color = name, position = "stacked")) + 
   ggtitle("Mixtapes with Purchase and Download Options (2015 - 2020)") +
   theme_minimal() + 
   ylab("Mixtapes") + 
@@ -428,8 +521,25 @@ options_enabled %>%
 
 ### Options Enabled Rate Plot
 ```{r}
-options_enabled %>% 
-  filter(name %in% c("download_enabled_rate", "buy_enabled_rate")) %>% 
+options_enabled_rates <- options_enabled %>% 
+  filter(name %in% c("download_enabled_rate", "buy_enabled_rate"))
+  
+options_enabled_plot <- options_enabled_rates %>% 
+  ggplot(., aes(x = release_month, y = value)) +
+  geom_line(aes(color = name)) + 
+  ggtitle("Rate of Purchase and Download Options (2015-2020)") +
+  theme_minimal() +
+  theme(legend.position = c(.85,.85)) +
+  ylab("Rate of Appearance") + 
+  scale_x_date(date_labels = "%b-%y", date_breaks = "year", limits = c(ymd("2015-01-01"), ymd("2020-12-31"))) +
+  scale_color_discrete(name = NULL, labels = c("Purchase Enabled", "Download Enabled")) + 
+  xlab("Release Month")
+
+options_enabled_plot
+```
+
+```{r}
+options_engangement <- options_enabled_rates %>% 
   ggplot(., aes(x = release_month, y = value)) +
   geom_line(aes(color = name)) + 
   ggtitle("Rate of Purchase and Download Options (2015-2020)") +
@@ -439,4 +549,3 @@ options_enabled %>%
   scale_color_discrete(name = NULL, labels = c("Purchase Enabled", "Download Enabled")) + 
   xlab("Release Month")
 ```
-
